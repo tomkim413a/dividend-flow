@@ -1,0 +1,23 @@
+# ============================================================
+# Render 部署蓝图（免费套餐）
+# 用法：Render → New + → Blueprint → 选择本仓库 → Apply
+# 只需手动填 DATABASE_URL（Supabase 连接串），JWT_SECRET 会自动生成
+# ============================================================
+services:
+  - type: web
+    name: dividend-flow
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: server
+    buildCommand: npm install
+    startCommand: node index.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true          # Render 自动生成随机密钥，无需手动填
+      - key: DATABASE_URL
+        sync: false                  # 部署时由你粘贴 Supabase 连接串

@@ -1,0 +1,59 @@
+{
+  "name": "dividend-flow",
+  "productName": "股息流",
+  "version": "1.2.8",
+  "description": "股息流 · 股息自由游戏（离线桌面版）",
+  "author": "Dividend Flow",
+  "license": "MIT",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "web": "node serve.js 5173",
+    "dist": "electron-builder --win --x64 --publish never",
+    "dist:dir": "electron-builder --win --x64 --dir --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.dividendflow.desktop",
+    "productName": "股息流",
+    "copyright": "仅供学习交流使用",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "index.html",
+      "css/**/*",
+      "js/**/*",
+      "BGM/**/*",
+      "audio/**/*",
+      "main.js",
+      "!**/*.map"
+    ],
+    "asarUnpack": [
+      "BGM/**/*",
+      "audio/**/*"
+    ],
+    "compression": "normal",
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "股息流-${version}-便携版.exe",
+      "unpackDirName": "DividendFlow",
+      "requestExecutionLevel": "user"
+    }
+  }
+}

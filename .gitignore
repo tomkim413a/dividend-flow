@@ -1,0 +1,18 @@
+# 依赖
+node_modules/
+server/node_modules/
+
+# 构建产物
+dist/
+build/*.exe
+
+# 本地数据与密钥（务必不要提交）
+server/data/
+.env
+server/.env
+
+# 系统/编辑器
+.DS_Store
+Thumbs.db
+*.log
+.uitest/
