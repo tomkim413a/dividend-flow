@@ -119,6 +119,22 @@ https://dividend-flow-xxxx.onrender.com
 
 ---
 
+## 邮件服务（找回密码）
+
+注册需要邮箱，找回密码通过邮件发送重置链接。在 Render → 你的服务 → **Environment** 添加：
+
+| 变量 | 说明 | 示例 |
+|---|---|---|
+| `APP_URL` | 站点地址（用于拼重置链接） | `https://dividend-flow-xxxx.onrender.com` |
+| `SMTP_HOST` | 邮件服务器 | `smtp.qq.com` |
+| `SMTP_PORT` | 端口 | `465` |
+| `SMTP_USER` | 发件邮箱 | `you@qq.com` |
+| `SMTP_PASS` | **授权码**（不是登录密码） | 邮箱设置里开启 SMTP 后生成 |
+| `SMTP_FROM` | 发件人（一般同 SMTP_USER） | `you@qq.com` |
+
+> QQ 邮箱：设置 → 账户 → 开启「POP3/SMTP 服务」→ 生成授权码，用授权码作为 `SMTP_PASS`。
+> 未配置 SMTP 时：注册/登录正常，找回密码会把链接输出到服务端日志（仅适合本地测试）。
+
 ## 本地开发（不部署也能跑）
 
 ```bash

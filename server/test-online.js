@@ -29,8 +29,10 @@ function connect(token) {
 
 (async () => {
   const u = 'p' + Math.random().toString(36).slice(2, 8);
-  const a = await api('/api/register', { username: u + 'a', password: '123456' });
-  const b = await api('/api/register', { username: u + 'b', password: '123456' });
+  await api('/api/register', { username: u + 'a', email: u + 'a@example.com', password: '123456' });
+  await api('/api/register', { username: u + 'b', email: u + 'b@example.com', password: '123456' });
+  const a = await api('/api/login', { username: u + 'a', password: '123456' });
+  const b = await api('/api/login', { username: u + 'b', password: '123456' });
 
   const s1 = await connect(a.token);
   const s2 = await connect(b.token);

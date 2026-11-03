@@ -22,9 +22,11 @@ function connect(token) {
 
 (async () => {
   const u = 'pf' + Math.random().toString(36).slice(2, 7);
-  const a = await api('/api/register', { username: u + 'a', password: '123456' });
-  const b = await api('/api/register', { username: u + 'b', password: '123456' });
-  if (a.err || b.err) throw new Error('注册失败：' + (a.err || b.err));
+  const ra = await api('/api/register', { username: u + 'a', email: u + 'a@example.com', password: '123456' });
+  const rb = await api('/api/register', { username: u + 'b', email: u + 'b@example.com', password: '123456' });
+  if (ra.err || rb.err) throw new Error('注册失败：' + (ra.err || rb.err));
+  const a = await api('/api/login', { username: u + 'a', password: '123456' });
+  const b = await api('/api/login', { username: u + 'b', password: '123456' });
 
   const s1 = await connect(a.token);
   const s2 = await connect(b.token);

@@ -58,12 +58,38 @@ app.get('/api/health', (req, res) => {
 /* ---------------- 账号 API ---------------- */
 app.post('/api/register', async (req, res) => {
   try {
-    const { username, password } = req.body || {};
-    const r = await auth.register(username, password);
+    const { username, email, password } = req.body || {};
+    const r = await auth.register(username, email, password);
+    if (r.err) return res.status(400).json({ err: r.err });
+    res.json({ ok: true, user: r.user });     // 不返回 token：注册后去登录
+  } catch (e) {
+    console.error('[register]', e);
+    res.status(500).json({ err: '服务器繁忙，请稍后重试' });
+  }
+});
+
+/* 找回密码：发送重置邮件 */
+app.post('/api/forgot', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const r = await auth.forgot(email);
     if (r.err) return res.status(400).json({ err: r.err });
     res.json(r);
   } catch (e) {
-    console.error('[register]', e);
+    console.error('[forgot]', e);
+    res.status(500).json({ err: '服务器繁忙，请稍后重试' });
+  }
+});
+
+/* 重置密码 */
+app.post('/api/reset', async (req, res) => {
+  try {
+    const { token, password } = req.body || {};
+    const r = await auth.reset(token, password);
+    if (r.err) return res.status(400).json({ err: r.err });
+    res.json(r);
+  } catch (e) {
+    console.error('[reset]', e);
     res.status(500).json({ err: '服务器繁忙，请稍后重试' });
   }
 });
@@ -221,6 +247,9 @@ io.on('connection', socket => {
 (async () => {
   const info = await db.init();
   console.log(`[db] mode = ${info.mode}`);
+  if (!process.env.APP_URL) {
+    console.warn('[mail] 未配置 APP_URL：重置密码邮件里的链接会是相对路径（仅本地可用）。上线请配置为站点地址。');
+  }
   server.listen(PORT, () => {
     console.log(`股息流 · 联机服务端已启动： http://localhost:${PORT}  (db=${info.mode})`);
   });

@@ -21,6 +21,7 @@
   .ol-select{background:#131c2b;color:#e8eef7;border:1px solid #3a4a63;border-radius:8px;
     padding:8px 10px;font-size:13px;cursor:pointer;margin-right:auto;max-width:150px}
   .ol-msg{min-height:20px;font-size:13px;color:#ffb4b4;margin:4px 0}
+  .ol-msg.ok{color:#3ddc97}
   .ol-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:8px}
   .ol-seats{list-style:none;padding:0;margin:8px 0;max-height:150px;overflow:auto}
   .ol-seats li{padding:6px 10px;border-radius:6px;background:#1b2637;margin-bottom:4px;font-size:14px}
@@ -140,14 +141,17 @@
 
 <!-- ========== 联机：登录 / 注册 ========== -->
 <div id="auth-overlay" class="hidden">
-  <div class="mback"><div class="mcard" style="max-width:360px">
-    <h3>🌐 联机登录</h3>
+  <div class="mback"><div class="mcard" style="max-width:380px">
+    <h3 id="auth-title">🌐 联机登录</h3>
     <input id="auth-user" class="ol-input" type="text" placeholder="用户名（最长 16 字）" autocomplete="off">
+    <input id="auth-email" class="ol-input hidden" type="email" placeholder="邮箱（用于找回密码）" autocomplete="off">
     <input id="auth-pass" class="ol-input" type="password" placeholder="密码（至少 4 位）">
+    <input id="auth-pass2" class="ol-input hidden" type="password" placeholder="确认密码">
     <div id="auth-msg" class="ol-msg"></div>
     <div class="ol-btns">
-      <button id="auth-login" class="btn primary" type="button">登录</button>
-      <button id="auth-register" class="btn" type="button">注册</button>
+      <button id="auth-submit" class="btn primary" type="button">登录</button>
+      <button id="auth-switch" class="btn" type="button">去注册</button>
+      <button id="auth-forgot" class="btn ghost" type="button">忘记密码</button>
       <button id="auth-close" class="btn ghost" type="button">关闭</button>
     </div>
   </div></div>

@@ -50,29 +50,76 @@
     })), Promise.resolve());
   }
 
-  /* ---------------- 登录 / 注册 ---------------- */
+  /* ---------------- 登录 / 注册 / 找回密码 ---------------- */
   function showAuth(onOk) {
     const box = el('auth-overlay');
     if (!box) return;
     box.classList.remove('hidden');
-    const u = el('auth-user'), p = el('auth-pass'), msg = el('auth-msg');
-    msg.textContent = '';
 
-    el('auth-login').onclick = async () => {
-      const r = await post('/api/login', { username: u.value, password: p.value });
-      if (r.err) { msg.textContent = '❌ ' + r.err; return; }
-      setToken(r.token);
-      box.classList.add('hidden');
-      onOk(r.user);
+    const title = el('auth-title'), u = el('auth-user'), em = el('auth-email');
+    const p = el('auth-pass'), p2 = el('auth-pass2'), msg = el('auth-msg');
+    const submit = el('auth-submit'), switcher = el('auth-switch'), forgotBtn = el('auth-forgot');
+    let mode = 'login';
+
+    const say = (text, ok) => {
+      msg.textContent = text || '';
+      msg.classList.toggle('ok', !!ok);
     };
-    el('auth-register').onclick = async () => {
-      const r = await post('/api/register', { username: u.value, password: p.value });
-      if (r.err) { msg.textContent = '❌ ' + r.err; return; }
-      setToken(r.token);
-      box.classList.add('hidden');
-      onOk(r.user);
+
+    function setMode(m, prefill) {
+      mode = m;
+      const isLogin = m === 'login', isReg = m === 'register', isForgot = m === 'forgot';
+      title.textContent = isLogin ? '🌐 联机登录' : (isReg ? '📝 注册账号' : '🔑 找回密码');
+      u.classList.toggle('hidden', isForgot);          // 找回密码不需要用户名
+      p.classList.toggle('hidden', isForgot);
+      em.classList.toggle('hidden', !(isReg || isForgot));
+      p2.classList.toggle('hidden', !isReg);
+      forgotBtn.classList.toggle('hidden', !isLogin);
+      submit.textContent = isLogin ? '登录' : (isReg ? '注册' : '发送重置邮件');
+      switcher.textContent = isLogin ? '去注册' : '返回登录';
+      say('');
+      p.value = ''; p2.value = '';
+      if (isReg) em.value = '';
+      if (prefill) u.value = prefill;
+    }
+
+    submit.onclick = async () => {
+      if (mode === 'login') {
+        const r = await post('/api/login', { username: u.value, password: p.value });
+        if (r.err) return say('❌ ' + r.err);
+        setToken(r.token);
+        say('✅ 登录成功，正在进入…', true);
+        setTimeout(() => { box.classList.add('hidden'); onOk(r.user); }, 700);
+        return;
+      }
+
+      if (mode === 'register') {
+        if (!em.value.trim()) return say('❌ 请填写邮箱');
+        if (p.value !== p2.value) return say('❌ 两次输入的密码不一致');
+        if (p.value.length < 4) return say('❌ 密码至少 4 位');
+        const r = await post('/api/register', {
+          username: u.value, email: em.value.trim(), password: p.value
+        });
+        if (r.err) return say('❌ ' + r.err);
+        // 注册成功 → 回到登录界面（不自动登录）
+        setMode('login', u.value.trim());
+        say('✅ 注册成功，请用刚才的账号登录', true);
+        return;
+      }
+
+      // 找回密码
+      if (!em.value.trim()) return say('❌ 请填写注册时用的邮箱');
+      const r = await post('/api/forgot', { email: em.value.trim() });
+      if (r.err) return say('❌ ' + r.err);
+      say('✅ 如果该邮箱已注册，重置邮件已发送，请查收（含垃圾箱）', true);
+      if (r.devLink) console.log('[dev] 重置链接：', r.devLink + '\n' + (r.warn || ''));
     };
+
+    switcher.onclick = () => setMode(mode === 'login' ? 'register' : 'login', u.value.trim());
+    forgotBtn.onclick = () => setMode('forgot');
     el('auth-close').onclick = () => box.classList.add('hidden');
+
+    setMode('login');
   }
 
   /* ---------------- 大厅 ---------------- */
