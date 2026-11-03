@@ -18,6 +18,8 @@
   /* 联机：登录框与大厅 */
   .ol-input{display:block;width:100%;margin:8px 0;padding:9px 12px;border-radius:8px;
     border:1px solid #3a4a63;background:#131c2b;color:#e8eef7;font-size:14px;box-sizing:border-box}
+  .ol-select{background:#131c2b;color:#e8eef7;border:1px solid #3a4a63;border-radius:8px;
+    padding:8px 10px;font-size:13px;cursor:pointer;margin-right:auto;max-width:150px}
   .ol-msg{min-height:20px;font-size:13px;color:#ffb4b4;margin:4px 0}
   .ol-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:8px}
   .ol-seats{list-style:none;padding:0;margin:8px 0;max-height:150px;overflow:auto}
@@ -160,6 +162,7 @@
     <input id="lobby-roomid" class="ol-input" type="text" placeholder="输入房间号加入" autocomplete="off">
     <div id="lobby-msg" class="ol-msg"></div>
     <div class="ol-btns">
+      <select id="lobby-prof" class="ol-select" title="选择职业（选“随机”则开局时自动分配）"></select>
       <button id="lobby-create" class="btn" type="button">建房</button>
       <button id="lobby-join" class="btn" type="button">加入</button>
       <button id="lobby-start" class="btn primary" type="button" disabled>开局</button>

@@ -5,9 +5,19 @@
 'use strict';
 const { createEngineContext, buildCfg } = require('./engineHost');
 
-/** 深拷贝一份可序列化的状态快照（避免把引擎内部引用直接发出去） */
+/** 深拷贝一份可序列化的状态快照（避免把引擎内部引用直接发出去）
+ *  同时精简体积以降低网络延迟：行情历史只留最近 80 点、日志只留最新 120 条 */
 function snapshot(S) {
-  try { return JSON.parse(JSON.stringify(S)); } catch (e) { return null; }
+  try {
+    const snap = JSON.parse(JSON.stringify(S));
+    if (Array.isArray(snap.market)) {
+      snap.market.forEach(m => {
+        if (Array.isArray(m.hist) && m.hist.length > 80) m.hist = m.hist.slice(-80);
+      });
+    }
+    if (Array.isArray(snap.logs) && snap.logs.length > 120) snap.logs = snap.logs.slice(0, 120);
+    return snap;
+  } catch (e) { return null; }
 }
 
 /**

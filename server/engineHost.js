@@ -66,12 +66,14 @@ function createEngineContext(opts) {
   return { CF, Engine, takeSfx };
 }
 
-/** 生成一局的配置（cfg）：[{ name, prof, shape, ai }] */
+/** 生成一局的配置（cfg）：[{ name, prof, shape, ai }]
+ *  职业优先用座位上玩家选的（p.prof），缺失或非法时才按序号兜底 */
 function buildCfg(CF, players) {
   const profIds = CF.PROFESSIONS.map(p => p.id);
+  const valid = new Set(profIds);
   return players.map((p, i) => ({
     name: p.name,
-    prof: profIds[i % profIds.length],
+    prof: valid.has(p.prof) ? p.prof : profIds[i % profIds.length],
     shape: p.shape || '',
     ai: !!p.ai
   }));

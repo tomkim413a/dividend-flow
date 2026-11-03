@@ -69,11 +69,26 @@
     const seats = el('lobby-seats'), roomNo = el('lobby-roomno'), msg = el('lobby-msg');
     let entered = false;
 
+    // 职业下拉：随机 + 全部职业（选项来自 data.js）
+    const profSel = el('lobby-prof');
+    if (profSel && window.CF && CF.PROFESSIONS) {
+      profSel.innerHTML = '<option value="">🎲 随机职业</option>' +
+        CF.PROFESSIONS.map(p => `<option value="${p.id}">${p.icon} ${p.name}</option>`).join('');
+      try { const s = sessionStorage.getItem('cf_online_prof'); if (s) profSel.value = s; } catch (e) {}
+      profSel.onchange = () => {
+        try { sessionStorage.setItem('cf_online_prof', profSel.value); } catch (e) {}
+        NET.send(CS.SET_PROF, { prof: profSel.value });   // 已在房间内则同步给服务端
+      };
+    }
+
     NET.onEvent('room', r => {
       if (!r) return;
       roomNo.textContent = r.id;
-      seats.innerHTML = (r.seats || []).map(s =>
-        `<li>${esc(s.name)}${s.ai ? ' <small>（电脑）</small>' : ''}</li>`).join('');
+      seats.innerHTML = (r.seats || []).map(s => {
+        const pr = (window.CF && CF.PROFESSIONS || []).find(x => x.id === s.prof);
+        return `<li>${esc(s.name)}${s.ai ? ' <small>（电脑）</small>' : ''}` +
+          `${pr ? ` <small>${pr.icon} ${pr.name}</small>` : ''}</li>`;
+      }).join('');
       el('lobby-start').disabled = !(r.hostId === user.id);
       msg.textContent = '';
     });
@@ -88,11 +103,12 @@
       if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.enter();
     });
 
-    el('lobby-create').onclick = () => NET.send(CS.CREATE_ROOM);
+    const profVal = () => (el('lobby-prof') ? el('lobby-prof').value : '');
+    el('lobby-create').onclick = () => NET.send(CS.CREATE_ROOM, { prof: profVal() });
     el('lobby-join').onclick = () => {
       const id = String((el('lobby-roomid').value || '')).trim().toUpperCase();
       if (!id) { msg.textContent = '请输入房间号'; return; }
-      NET.send(CS.JOIN_ROOM, { roomId: id });
+      NET.send(CS.JOIN_ROOM, { roomId: id, prof: profVal() });
     };
     el('lobby-start').onclick = () => NET.send(CS.START_GAME);
     el('lobby-close').onclick = () => { box.classList.add('hidden'); NET.disconnect(); };

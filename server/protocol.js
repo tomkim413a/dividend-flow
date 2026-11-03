@@ -9,6 +9,7 @@ const CS = {
   JOIN_ROOM:   'cs:joinRoom',        // 加房（{ roomId }）
   LEAVE_ROOM:  'cs:leaveRoom',       // 离房
   START_GAME:  'cs:startGame',       // 房主开局
+  SET_PROF:    'cs:setProf',         // 开局前改自己的职业 { prof }
   RESUME:      'cs:resume',          // 断线重连回对局 { roomId }
   TOGGLE_AI:   'cs:toggleAi',        // 座位设为 AI / 真人
   ROLL:        'cs:roll',            // 掷骰

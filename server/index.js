@@ -95,7 +95,7 @@ function roomInfo(room) {
     id: room.id,
     hostId: room.hostId,
     started: !!room.started,
-    seats: room.seats.map(s => ({ userId: s.userId, name: s.name, ai: !!s.ai }))
+    seats: room.seats.map(s => ({ userId: s.userId, name: s.name, ai: !!s.ai, prof: s.prof || '' }))
   };
 }
 
@@ -107,15 +107,15 @@ function currentRoomId(socket) {
 
 io.on('connection', socket => {
   /* 建房 */
-  socket.on(CS.CREATE_ROOM, () => {
-    const room = roomMgr.createRoom(socket.user);
+  socket.on(CS.CREATE_ROOM, (data = {}) => {
+    const room = roomMgr.createRoom(socket.user, data.prof);
     socket.join(room.id);
     socket.emit(SC.ROOM, roomInfo(room));
   });
 
   /* 加房 */
   socket.on(CS.JOIN_ROOM, (data = {}) => {
-    const r = roomMgr.joinRoom(data.roomId, socket.user);
+    const r = roomMgr.joinRoom(data.roomId, socket.user, data.prof);
     if (r.err) return socket.emit(SC.ERROR, { msg: r.err });
     socket.join(r.room.id);
     io.to(r.room.id).emit(SC.ROOM, roomInfo(r.room));
@@ -127,6 +127,14 @@ io.on('connection', socket => {
     if (!roomId) return;
     socket.leave(roomId);
     const room = roomMgr.leaveRoom(roomId, socket.user.id);
+    if (room) io.to(roomId).emit(SC.ROOM, roomInfo(room));
+  });
+
+  /* 开局前修改职业 */
+  socket.on(CS.SET_PROF, (d = {}) => {
+    const roomId = currentRoomId(socket);
+    if (!roomId) return;
+    const room = roomMgr.setProf(roomId, socket.user.id, d.prof);
     if (room) io.to(roomId).emit(SC.ROOM, roomInfo(room));
   });
 
