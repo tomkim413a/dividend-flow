@@ -17,12 +17,26 @@
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   async function post(p, body) {
-    const r = await fetch(p, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body || {})
-    });
-    return r.json();
+    const once = () => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 20000);   // 免费实例冷启动可能要 30–60s
+      return fetch(p, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+        signal: ctrl.signal
+      }).finally(() => clearTimeout(timer));
+    };
+    try {
+      return await (await once()).json();
+    } catch (e) {
+      // 网络失败/超时（常见于免费实例休眠后唤醒）→ 自动重试一次
+      try {
+        return await (await once()).json();
+      } catch (e2) {
+        return { err: '服务器正在唤醒或网络不稳，请等 30–60 秒后重试' };
+      }
+    }
   }
 
   function loadScripts(srcs) {
@@ -134,6 +148,8 @@
     if (!b) return;
     // 桌面 exe（file://）没有联机服务端 → 隐藏该入口，避免误点
     if (location.protocol === 'file:') { b.style.display = 'none'; return; }
+    // 提前唤醒服务端：免费实例休眠后首次请求要 30–60 秒，先在后台 ping 一下
+    try { fetch('/api/health', { cache: 'no-store' }).catch(() => {}); } catch (e) {}
     b.addEventListener('click', () => window.startOnline());
   });
 
@@ -143,7 +159,7 @@
         let t = getToken(), me = null;
         if (t) {
           try {
-            const r = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + t } });
+            const r = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + t }, cache: 'no-store' });
             if (r.ok) me = await r.json();
           } catch (e) { me = null; }
         }

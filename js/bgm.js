@@ -52,7 +52,8 @@ const BGM = (function () {
     if (els[key]) return els[key];
     const a = new Audio(SRC[key]);
     a.loop = true;
-    a.preload = 'auto';
+    // 不预下载：19MB 音频若与登录/接口抢带宽，会让进入游戏很慢（跨境尤甚）
+    a.preload = 'none';
     a.volume = effVol();
     els[key] = a;
     return a;
@@ -100,6 +101,8 @@ const BGM = (function () {
     const a = el(scene);
     Object.keys(els).forEach(k => { if (k !== scene) { try { els[k].pause(); } catch (e) {} } });
     a.volume = effVol();
+    // 只在要播这首时才真正加载它（切换场景才拉流）
+    if (a.preload !== 'auto') { a.preload = 'auto'; try { a.load(); } catch (e) {} }
     try {
       const p = a.play();
       if (p && typeof p.then === 'function') {
@@ -159,18 +162,6 @@ const BGM = (function () {
     syncUI();
     play('setup');                          // 开始界面 BGM
 
-    /* 页面加载完成后再预取其余曲目：避免与首屏资源抢带宽，
-       同时减少切换场景（进入对局 / 结算）时的缓冲卡顿。 */
-    const preloadRest = () => {
-      Object.keys(SRC).forEach(k => {
-        if (k === scene) return;
-        const a = el(k);
-        a.preload = 'auto';
-        try { a.load(); } catch (e) {}
-      });
-    };
-    if (document.readyState === 'complete') setTimeout(preloadRest, 800);
-    else window.addEventListener('load', () => setTimeout(preloadRest, 800), { once: true });
   }
 
   return {
