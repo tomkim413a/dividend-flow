@@ -34,8 +34,20 @@ const io = new socketIo.Server(server, {
 app.set('trust proxy', 1);               // Render / Nginx 反向代理后取真实 IP
 app.use(express.json({ limit: '64kb' }));
 
-/* 托管前端（index.html / css / js / BGM / audio） */
-app.use(express.static(ROOT, { index: 'index.html' }));
+/* 托管前端（index.html / css / js / BGM / audio）
+   音频加长缓存：首次加载后浏览器直接复用，避免跨境反复拉流导致 BGM 断断续续；
+   页面与脚本保持 no-cache，保证更新即时生效。 */
+app.use(express.static(ROOT, {
+  index: 'index.html',
+  setHeaders(res, filePath) {
+    const p = String(filePath).replace(/\\/g, '/');
+    if (/\/BGM\/|\/audio\//.test(p)) {
+      res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  }
+}));
 app.get('/protocol.js', (req, res) => res.sendFile(path.join(__dirname, 'protocol.js')));
 
 /* ---------------- 健康检查（Render 探活 / 保活 ping 用） ---------------- */

@@ -158,6 +158,19 @@ const BGM = (function () {
     });
     syncUI();
     play('setup');                          // 开始界面 BGM
+
+    /* 页面加载完成后再预取其余曲目：避免与首屏资源抢带宽，
+       同时减少切换场景（进入对局 / 结算）时的缓冲卡顿。 */
+    const preloadRest = () => {
+      Object.keys(SRC).forEach(k => {
+        if (k === scene) return;
+        const a = el(k);
+        a.preload = 'auto';
+        try { a.load(); } catch (e) {}
+      });
+    };
+    if (document.readyState === 'complete') setTimeout(preloadRest, 800);
+    else window.addEventListener('load', () => setTimeout(preloadRest, 800), { once: true });
   }
 
   return {

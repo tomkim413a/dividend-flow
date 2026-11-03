@@ -49,7 +49,14 @@
 
   /* ---------- 动作代理：联机走网络，单机走本地引擎 ---------- */
   const Act = {
-    roll: () => NET.on ? NET.send(CS.ROLL) : Engine.act.roll(),
+    roll: () => {
+      if (!NET.on) { Engine.act.roll(); return; }
+      // 联机：点下去立刻出声，不等服务端往返（否则音效要等一个 RTT）
+      try {
+        if (window.SFX) { window.SFX.dice(); window.__localDiceAt = Date.now(); }
+      } catch (e) {}
+      NET.send(CS.ROLL);
+    },
     choose: (a, p) => NET.on ? NET.send(CS.CHOOSE, { choice: a, payload: p }) : Engine.act.choose(a, p),
     sell: (sym, n) => NET.on ? NET.send(CS.SELL, { sym, shares: n }) : Engine.act.sellStock(sym, n),
     payDebt: (n) => NET.on ? NET.send(CS.PAY_DEBT, { amount: n }) : Engine.act.payDebt(n)

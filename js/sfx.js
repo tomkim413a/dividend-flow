@@ -102,7 +102,17 @@ const SFX = (function () {
     tone(1320, 0.09, 'sine', 0.12, 0.35);
   }
 
+  /* 预热：首次用户交互时创建 AudioContext 并预加载掷骰素材，
+     避免第一次掷骰才去下载/初始化导致音效延迟。 */
+  function warm() {
+    try { const a = diceAudio(); if (a) { a.preload = 'auto'; a.load(); } } catch (e) {}
+    ac();
+  }
+  document.addEventListener('pointerdown', warm, { once: true });
+  document.addEventListener('keydown', warm, { once: true });
+
   return {
+    warm,
     /* 掷骰：播放素材 audio/audio of dice.mp3（不可用则回退到合成音） */
     dice() {
       if (!enabled()) return;

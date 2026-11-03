@@ -1890,6 +1890,8 @@
       const sfx = st.__sfx;
       if (sfx && sfx.length && window.SFX) {
         sfx.forEach((k, i) => {
+          // 自己掷骰时本地已即时播过，避免服务端回包再响一次
+          if (k === 'dice' && Date.now() - (window.__localDiceAt || 0) < 1200) return;
           const fn = window.SFX[k];
           if (typeof fn !== 'function') return;
           // 走格是逐格连响的，错开一点回放节奏
