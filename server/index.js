@@ -251,10 +251,14 @@ io.on('connection', socket => {
   if (!process.env.APP_URL) {
     console.warn('[mail] 未配置 APP_URL：重置密码邮件里的链接会是相对路径（仅本地可用）。上线请配置为站点地址。');
   }
-  if (mailer.ready()) {
-    console.log(`[mail] SMTP 已配置：${process.env.SMTP_HOST}:${process.env.SMTP_PORT || 465} (user=${process.env.SMTP_USER})`);
+  const mailBackend = mailer.backend();
+  if (mailBackend === 'none') {
+    console.warn('[mail] 未配置邮件服务：找回密码不会发信，只会把重置链接打印到日志。');
   } else {
-    console.warn('[mail] SMTP 未配置：找回密码不会发信，只会把重置链接打印到日志。');
+    console.log(`[mail] 邮件服务：${mailBackend}，发件人=${mailer.fromAddress() || '(未设置)'}`);
+    if (mailBackend === 'smtp') {
+      console.warn('[mail] 注意：云服务器（Render 等）常屏蔽 SMTP 端口，若发信超时请改用 BREVO_API_KEY。');
+    }
   }
   server.listen(PORT, () => {
     console.log(`股息流 · 联机服务端已启动： http://localhost:${PORT}  (db=${info.mode})`);

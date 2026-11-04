@@ -121,19 +121,44 @@ https://dividend-flow-xxxx.onrender.com
 
 ## 邮件服务（找回密码）
 
-注册需要邮箱，找回密码通过邮件发送重置链接。在 Render → 你的服务 → **Environment** 添加：
+> ⚠️ **云服务器（Render 等）普遍屏蔽出站 SMTP 端口（465/587）**，用 QQ 邮箱 SMTP 会一直 `Connection timeout`。
+> 线上请使用 **HTTPS 邮件 API**（走 443 端口）。
 
-| 变量 | 说明 | 示例 |
-|---|---|---|
-| `APP_URL` | 站点地址（用于拼重置链接） | `https://dividend-flow-xxxx.onrender.com` |
-| `SMTP_HOST` | 邮件服务器 | `smtp.qq.com` |
-| `SMTP_PORT` | 端口 | `465` |
-| `SMTP_USER` | 发件邮箱 | `you@qq.com` |
-| `SMTP_PASS` | **授权码**（不是登录密码） | 邮箱设置里开启 SMTP 后生成 |
-| `SMTP_FROM` | 发件人（一般同 SMTP_USER） | `you@qq.com` |
+### 推荐：Brevo（免费 300 封/天）
 
-> QQ 邮箱：设置 → 账户 → 开启「POP3/SMTP 服务」→ 生成授权码，用授权码作为 `SMTP_PASS`。
-> 未配置 SMTP 时：注册/登录正常，找回密码会把链接输出到服务端日志（仅适合本地测试）。
+1. 注册 https://www.brevo.com
+2. 右上头像 → **SMTP & API** → **API Keys** → 创建 API Key
+3. **Settings → Senders, Domains & IPs → Add a sender**，填写发件邮箱并点邮件里的验证链接
+4. Render → Environment 添加：
+
+| 变量 | 值 |
+|---|---|
+| `APP_URL` | `https://你的服务地址.onrender.com`（结尾不要 `/`） |
+| `MAIL_FROM` | 第 3 步验证过的发件邮箱 |
+| `BREVO_API_KEY` | 第 2 步创建的 API Key |
+
+5. 部署后日志应出现：`[mail] 邮件服务：brevo，发件人=xxx`
+
+### 备选：Resend
+
+设置 `RESEND_API_KEY` + `MAIL_FROM` 即可（需在 Resend 验证发件域名或邮箱）。
+
+### 传统 SMTP（仅本地/自建服务器）
+
+`SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM`。
+云上使用会超时，不建议。
+
+> 未配置任何邮件服务时：注册/登录正常，找回密码会把链接输出到服务端日志（仅适合本地测试）。
+
+## ⚠️ 数据库必须配置（否则账号会丢）
+
+Render 容器磁盘是临时的，**不配 `DATABASE_URL` 时**服务端会退回 JSON 文件存储，每次部署/重启/休眠唤醒都会清空账号与战绩。
+
+启动日志出现 `[db] mode = json` 就说明没配好；正确应为：
+
+```
+[db] mode = postgres
+```
 
 ## 本地开发（不部署也能跑）
 

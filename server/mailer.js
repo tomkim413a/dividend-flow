@@ -1,21 +1,30 @@
 /* ============================================================
  * mailer.js —— 邮件发送（找回密码）
  *
- * 通过 SMTP 发送，配置环境变量即可（QQ邮箱/163/腾讯企业邮/Resend SMTP 都支持）：
- *   SMTP_HOST  smtp.qq.com
- *   SMTP_PORT  465（SSL）或 587
- *   SMTP_USER  你的邮箱
- *   SMTP_PASS  邮箱授权码（不是登录密码）
- *   SMTP_FROM  发件人地址（一般同 SMTP_USER）
- *   APP_URL    站点地址，如 https://xxx.onrender.com（拼重置链接用）
+ * 支持三种后端，按优先级自动选择：
+ *   ① BREVO_API_KEY   → Brevo HTTP API（走 443，云服务器可用，推荐）
+ *   ② RESEND_API_KEY  → Resend HTTP API（走 443）
+ *   ③ SMTP_*          → 传统 SMTP（本地/自建服务器可用；Render 等云平台常屏蔽 465/587）
  *
- * 未配置 SMTP 时：不报错，把重置链接打印到服务端日志（方便本地/内网测试）。
+ * 说明：云服务器（Render/阿里云等）普遍屏蔽出站 SMTP 端口，
+ *       所以线上强烈建议用 ①② 这种 HTTPS API，而不是 SMTP。
+ *
+ * 需要的环境变量：
+ *   MAIL_FROM      发件邮箱（必须是邮件服务商已验证的发件地址）
+ *   BREVO_API_KEY  Brevo 的 API Key（免费 300 封/天）
+ *   或 RESEND_API_KEY
+ *   或 SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / SMTP_FROM
+ *   APP_URL        站点地址（拼重置链接）
  * ============================================================ */
 'use strict';
 
+const BREVO_KEY = String(process.env.BREVO_API_KEY || '').trim();
+const RESEND_KEY = String(process.env.RESEND_API_KEY || '').trim();
+const MAIL_FROM = String(process.env.MAIL_FROM || '').trim();
+
 let transporter = null;
 
-function cfg() {
+function smtpCfg() {
   const host = process.env.SMTP_HOST;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
@@ -29,14 +38,84 @@ function cfg() {
   };
 }
 
-function ready() { return !!cfg(); }
+function backend() {
+  if (BREVO_KEY) return 'brevo';
+  if (RESEND_KEY) return 'resend';
+  if (smtpCfg()) return 'smtp';
+  return 'none';
+}
+function ready() { return backend() !== 'none'; }
 
-async function sendResetMail(to, link) {
-  const c = cfg();
-  if (!c) {
-    console.log('[mail] 未配置 SMTP，重置链接：', link);
-    return { sent: false, link };
-  }
+/** 发件地址：优先 MAIL_FROM，其次 SMTP_FROM/SMTP_USER */
+function fromAddress() {
+  const c = smtpCfg();
+  return MAIL_FROM || (c ? c.from : '') || (c ? c.user : '');
+}
+
+const SUBJECT = '股息流 · 重置密码';
+const textBody = link => `点击下面链接重置密码（30 分钟内有效）：\n${link}\n\n如果不是你本人操作，请忽略本邮件。`;
+const htmlBody = link => `<p>点击下面链接重置密码（<b>30 分钟内有效</b>）：</p>
+  <p><a href="${link}">${link}</a></p>
+  <p style="color:#888">如果不是你本人操作，请忽略本邮件。</p>`;
+
+function withTimeout(ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  return { signal: ctrl.signal, done: () => clearTimeout(timer) };
+}
+
+/* ---------------- Brevo（HTTPS，推荐） ---------------- */
+async function sendViaBrevo(to, link) {
+  const t = withTimeout(15000);
+  try {
+    const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: { 'api-key': BREVO_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sender: { name: '股息流', email: fromAddress() },
+        to: [{ email: to }],
+        subject: SUBJECT,
+        htmlContent: htmlBody(link),
+        textContent: textBody(link)
+      }),
+      signal: t.signal
+    });
+    if (!r.ok) {
+      const body = await r.text().catch(() => '');
+      return { sent: false, err: `Brevo ${r.status} ${body.slice(0, 160)}` };
+    }
+    return { sent: true };
+  } finally { t.done(); }
+}
+
+/* ---------------- Resend（HTTPS） ---------------- */
+async function sendViaResend(to, link) {
+  const t = withTimeout(15000);
+  try {
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: `股息流 <${fromAddress()}>`,
+        to: [to],
+        subject: SUBJECT,
+        html: htmlBody(link),
+        text: textBody(link)
+      }),
+      signal: t.signal
+    });
+    if (!r.ok) {
+      const body = await r.text().catch(() => '');
+      return { sent: false, err: `Resend ${r.status} ${body.slice(0, 160)}` };
+    }
+    return { sent: true };
+  } finally { t.done(); }
+}
+
+/* ---------------- 传统 SMTP ---------------- */
+async function sendViaSmtp(to, link) {
+  const c = smtpCfg();
+  if (!c) return { sent: false, err: 'SMTP 未配置' };
   try {
     if (!transporter) {
       const nodemailer = require('nodemailer');
@@ -44,23 +123,42 @@ async function sendResetMail(to, link) {
         host: c.host,
         port: c.port,
         secure: c.port === 465,
-        auth: { user: c.user, pass: c.pass }
+        auth: { user: c.user, pass: c.pass },
+        connectionTimeout: 12000,
+        greetingTimeout: 12000,
+        socketTimeout: 15000
       });
     }
     await transporter.sendMail({
       from: `"股息流" <${c.from}>`,
       to,
-      subject: '股息流 · 重置密码',
-      text: `点击下面链接重置密码（30 分钟内有效）：\n${link}\n\n如果不是你本人操作，请忽略本邮件。`,
-      html: `<p>点击下面链接重置密码（<b>30 分钟内有效</b>）：</p>
-             <p><a href="${link}">${link}</a></p>
-             <p style="color:#888">如果不是你本人操作，请忽略本邮件。</p>`
+      subject: SUBJECT,
+      text: textBody(link),
+      html: htmlBody(link)
     });
     return { sent: true };
   } catch (e) {
-    console.error('[mail] 发送失败：', e.message);
     return { sent: false, err: e.message };
   }
 }
 
-module.exports = { ready, sendResetMail };
+async function sendResetMail(to, link) {
+  const b = backend();
+  if (b === 'none') {
+    console.log('[mail] 未配置邮件服务，重置链接：', link);
+    return { sent: false, link };
+  }
+  if (!fromAddress()) return { sent: false, err: '未配置 MAIL_FROM（发件邮箱）' };
+
+  try {
+    if (b === 'brevo') return await sendViaBrevo(to, link);
+    if (b === 'resend') return await sendViaResend(to, link);
+    return await sendViaSmtp(to, link);
+  } catch (e) {
+    const msg = e && e.name === 'AbortError' ? '请求超时（15s）' : (e && e.message) || String(e);
+    console.error('[mail] 发送异常：', msg);
+    return { sent: false, err: msg };
+  }
+}
+
+module.exports = { ready, backend, sendResetMail, fromAddress };
