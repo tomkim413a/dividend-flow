@@ -19,6 +19,8 @@
 'use strict';
 
 const BREVO_KEY = String(process.env.BREVO_API_KEY || '').trim();
+const MAILJET_KEY = String(process.env.MAILJET_API_KEY || '').trim();
+const MAILJET_SECRET = String(process.env.MAILJET_SECRET_KEY || '').trim();
 const RESEND_KEY = String(process.env.RESEND_API_KEY || '').trim();
 const MAIL_FROM = String(process.env.MAIL_FROM || '').trim();
 
@@ -40,6 +42,7 @@ function smtpCfg() {
 
 function backend() {
   if (BREVO_KEY) return 'brevo';
+  if (MAILJET_KEY && MAILJET_SECRET) return 'mailjet';
   if (RESEND_KEY) return 'resend';
   if (smtpCfg()) return 'smtp';
   return 'none';
@@ -84,6 +87,40 @@ async function sendViaBrevo(to, link) {
       const body = await r.text().catch(() => '');
       return { sent: false, err: `Brevo ${r.status} ${body.slice(0, 160)}` };
     }
+    return { sent: true };
+  } finally { t.done(); }
+}
+
+/* ---------------- Mailjet（HTTPS，无需域名，验证发件邮箱即可） ---------------- */
+async function sendViaMailjet(to, link) {
+  const t = withTimeout(15000);
+  try {
+    const auth = Buffer.from(`${MAILJET_KEY}:${MAILJET_SECRET}`).toString('base64');
+    const r = await fetch('https://api.mailjet.com/v3.1/send', {
+      method: 'POST',
+      headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        Messages: [{
+          From: { Email: fromAddress(), Name: '股息流' },
+          To: [{ Email: to }],
+          Subject: SUBJECT,
+          TextPart: textBody(link),
+          HTMLPart: htmlBody(link)
+        }]
+      }),
+      signal: t.signal
+    });
+    const body = await r.text().catch(() => '');
+    if (!r.ok) return { sent: false, err: `Mailjet ${r.status} ${body.slice(0, 160)}` };
+    // Mailjet 即使 200 也可能单条失败，检查 Status
+    try {
+      const j = JSON.parse(body);
+      const st = j && j.Messages && j.Messages[0] && j.Messages[0].Status;
+      if (st && st !== 'success') {
+        const why = (j.Messages[0].Errors || []).map(e => e.ErrorMessage).join('; ');
+        return { sent: false, err: `Mailjet: ${why || st}` };
+      }
+    } catch (e) { /* 非 JSON 但 200 → 视为成功 */ }
     return { sent: true };
   } finally { t.done(); }
 }
@@ -152,6 +189,7 @@ async function sendResetMail(to, link) {
 
   try {
     if (b === 'brevo') return await sendViaBrevo(to, link);
+    if (b === 'mailjet') return await sendViaMailjet(to, link);
     if (b === 'resend') return await sendViaResend(to, link);
     return await sendViaSmtp(to, link);
   } catch (e) {

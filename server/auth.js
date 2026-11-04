@@ -123,4 +123,20 @@ async function reset(token, password) {
   return { ok: true };
 }
 
-module.exports = { register, login, forgot, reset, verify, publicUser };
+/**
+ * 管理员手动重置密码（无邮件服务时的兜底方案）
+ * 需要环境变量 ADMIN_TOKEN，调用时用请求头 x-admin-token 校验
+ */
+async function adminReset(username, password) {
+  username = String(username || '').trim();
+  password = String(password || '');
+  if (!username) return { err: '请提供用户名' };
+  if (password.length < 4) return { err: '新密码至少 4 位' };
+  const u = await Users.findByName(username);
+  if (!u) return { err: '用户不存在' };
+  await Users.updatePassword(u.id, bcrypt.hashSync(password, 8));
+  console.log(`[admin] 已重置密码：user=${u.username} (${u.id})`);
+  return { ok: true, username: u.username };
+}
+
+module.exports = { register, login, forgot, reset, adminReset, verify, publicUser };

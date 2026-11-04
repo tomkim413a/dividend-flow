@@ -82,6 +82,23 @@ app.post('/api/forgot', async (req, res) => {
   }
 });
 
+/* 管理员手动重置（无邮件服务时的兜底）：请求头 x-admin-token 必须等于 ADMIN_TOKEN */
+app.post('/api/admin/reset', async (req, res) => {
+  const expect = String(process.env.ADMIN_TOKEN || '').trim();
+  const got = String(req.headers['x-admin-token'] || (req.body && req.body.token) || '').trim();
+  if (!expect) return res.status(503).json({ err: '未配置 ADMIN_TOKEN，管理员重置不可用' });
+  if (got !== expect) return res.status(403).json({ err: '管理员令牌错误' });
+  try {
+    const { username, password } = req.body || {};
+    const r = await auth.adminReset(username, password);
+    if (r.err) return res.status(400).json({ err: r.err });
+    res.json(r);
+  } catch (e) {
+    console.error('[admin-reset]', e);
+    res.status(500).json({ err: '服务器繁忙，请稍后重试' });
+  }
+});
+
 /* 重置密码 */
 app.post('/api/reset', async (req, res) => {
   try {
