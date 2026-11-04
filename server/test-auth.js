@@ -25,7 +25,11 @@ async function post(p, body) {
   console.log('login:', lg.err ? lg.err : 'OK token=' + !!lg.token);
   if (!lg.token) throw new Error('登录失败');
 
-  const fg = await post('/api/forgot', { email });
+  // 用户名与邮箱不匹配 → 不应发信（不返回 devLink）
+  const fgBad = await post('/api/forgot', { email, username: name + 'zzz' });
+  console.log('用户名不匹配:', fgBad.devLink ? '仍返回链接(异常)' : '未发信(符合预期)');
+
+  const fg = await post('/api/forgot', { email, username: name });
   console.log('forgot:', JSON.stringify({ ok: fg.ok, warn: fg.warn, hasLink: !!fg.devLink }));
   if (!fg.devLink) throw new Error('未返回重置链接（本地应返回 devLink）');
 
@@ -43,7 +47,7 @@ async function post(p, body) {
   const reuse = await post('/api/reset', { token, password: 'zzzzzz' });
   console.log('令牌复用:', reuse.err || '仍然可用(异常)');
 
-  const ok = !oldLg.token && !!newLg.token && !!reuse.err && !!dup.err;
+  const ok = !oldLg.token && !!newLg.token && !!reuse.err && !!dup.err && !fgBad.devLink;
   console.log(ok ? '\n✅ 注册/登录/找回/重置 全部符合预期' : '\n❌ 有不符合预期的项');
   process.exit(ok ? 0 : 1);
 })().catch(e => { console.error('异常：', e.message); process.exit(1); });

@@ -16,6 +16,7 @@ const socketIo = require('socket.io');
 const auth = require('./auth');
 const roomMgr = require('./room');
 const db = require('./db');
+const mailer = require('./mailer');
 const { CS, SC } = require('./protocol');
 
 const ROOT = path.join(__dirname, '..');
@@ -71,8 +72,8 @@ app.post('/api/register', async (req, res) => {
 /* 找回密码：发送重置邮件 */
 app.post('/api/forgot', async (req, res) => {
   try {
-    const { email } = req.body || {};
-    const r = await auth.forgot(email);
+    const { email, username } = req.body || {};
+    const r = await auth.forgot(email, username);
     if (r.err) return res.status(400).json({ err: r.err });
     res.json(r);
   } catch (e) {
@@ -249,6 +250,11 @@ io.on('connection', socket => {
   console.log(`[db] mode = ${info.mode}`);
   if (!process.env.APP_URL) {
     console.warn('[mail] 未配置 APP_URL：重置密码邮件里的链接会是相对路径（仅本地可用）。上线请配置为站点地址。');
+  }
+  if (mailer.ready()) {
+    console.log(`[mail] SMTP 已配置：${process.env.SMTP_HOST}:${process.env.SMTP_PORT || 465} (user=${process.env.SMTP_USER})`);
+  } else {
+    console.warn('[mail] SMTP 未配置：找回密码不会发信，只会把重置链接打印到日志。');
   }
   server.listen(PORT, () => {
     console.log(`股息流 · 联机服务端已启动： http://localhost:${PORT}  (db=${info.mode})`);

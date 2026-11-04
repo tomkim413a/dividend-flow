@@ -70,7 +70,9 @@
       mode = m;
       const isLogin = m === 'login', isReg = m === 'register', isForgot = m === 'forgot';
       title.textContent = isLogin ? '🌐 联机登录' : (isReg ? '📝 注册账号' : '🔑 找回密码');
-      u.classList.toggle('hidden', isForgot);          // 找回密码不需要用户名
+      // 找回密码也保留用户名（可选）：填了就能"用户名 + 邮箱"双重校验，定位更准
+      u.classList.remove('hidden');
+      u.placeholder = isForgot ? '用户名（可选，填了更准确）' : '用户名（最长 16 字）';
       p.classList.toggle('hidden', isForgot);
       em.classList.toggle('hidden', !(isReg || isForgot));
       p2.classList.toggle('hidden', !isReg);
@@ -109,10 +111,12 @@
 
       // 找回密码
       if (!em.value.trim()) return say('❌ 请填写注册时用的邮箱');
-      const r = await post('/api/forgot', { email: em.value.trim() });
+      const r = await post('/api/forgot', { email: em.value.trim(), username: u.value.trim() });
       if (r.err) return say('❌ ' + r.err);
-      say('✅ 如果该邮箱已注册，重置邮件已发送，请查收（含垃圾箱）', true);
-      if (r.devLink) console.log('[dev] 重置链接：', r.devLink + '\n' + (r.warn || ''));
+      let tip = '✅ 如果该账号存在，重置邮件已发送，请查收（含垃圾箱）';
+      if (r.warn) tip += '\n⚠️ ' + r.warn;
+      say(tip, true);
+      if (r.devLink) console.log('[dev] 重置链接：', r.devLink);
     };
 
     switcher.onclick = () => setMode(mode === 'login' ? 'register' : 'login', u.value.trim());

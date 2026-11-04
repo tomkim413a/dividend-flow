@@ -60,24 +60,47 @@ async function login(username, password) {
 
 /**
  * 找回密码：发重置邮件
- * 无论邮箱是否存在都返回 ok（避免被用来探测注册情况）
+ * 可选传 username 做双重校验（用户名 + 邮箱必须匹配），定位更准；
+ * 不传则只按邮箱查。
+ * 无论账号是否存在都返回 ok（避免被用来探测注册情况），但服务端日志会写清原因。
  */
-async function forgot(email) {
+async function forgot(email, username) {
   email = String(email || '').trim();
+  username = String(username || '').trim();
   if (!EMAIL_RE.test(email)) return { err: '请输入正确的邮箱地址' };
 
-  const u = await Users.findByEmail(email);
-  if (!u) return { ok: true };
+  let u = null;
+  if (username) {
+    const byName = await Users.findByName(username);
+    if (byName && String(byName.email || '').toLowerCase() === email.toLowerCase()) {
+      u = byName;
+    } else {
+      console.log(`[forgot] 用户名与邮箱不匹配：user=${username} email=${email}` +
+        (byName ? `（该用户登记的邮箱是 ${byName.email || '(空)'}）` : '（用户不存在）'));
+    }
+  } else {
+    u = await Users.findByEmail(email);
+  }
+
+  if (!u) {
+    console.log(`[forgot] 未找到可用账号：email=${email} user=${username || '-'}（按防枚举策略仍返回 ok，不发信）`);
+    return { ok: true };
+  }
+  if (!u.email) {
+    console.log(`[forgot] 该账号注册时没有邮箱（老账号）：user=${u.username}，无法发信`);
+    return { ok: true };
+  }
 
   const token = crypto.randomBytes(24).toString('hex');
   await Resets.create(token, u.id, Date.now() + RESET_TTL);
 
   const link = `${APP_URL}/reset.html?token=${token}`;
   const r = await mailer.sendResetMail(u.email, link);
+  console.log(`[forgot] 已处理：user=${u.username} email=${u.email} smtp=${mailer.ready() ? 'on' : 'off'} sent=${!!r.sent}`);
 
   // 未配置 SMTP（本地/测试）→ 把链接一并返回，方便自测
   if (!mailer.ready()) return { ok: true, devLink: link, warn: '邮件服务未配置，已把重置链接输出到服务端日志' };
-  if (!r.sent) return { ok: true, warn: '邮件发送失败，请稍后重试或联系管理员' };
+  if (!r.sent) return { ok: true, warn: '邮件发送失败：' + (r.err || '请检查 SMTP 配置') };
   return { ok: true };
 }
 
