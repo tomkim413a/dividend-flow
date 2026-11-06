@@ -161,8 +161,11 @@ const server = http.createServer((req, res) => {
     if (!/gmail\.send/.test(granted)) {
       return done(res, 'Scope missing',
         `授权结果里【没有 gmail.send】，实际只拿到：${granted || '(空)'}。` +
-        '原因通常是 Google Auth Platform → 数据访问 里没登记该范围（或没点 Save），' +
-        '或「API 和服务 → 库 → Gmail API」未启用。请补好后重新运行本脚本。', false);
+        '只做一次排查：① 「API 和服务 → 库 → Gmail API」是否已启用；' +
+        '② 「数据访问 → 您的敏感范围」里该行刷新后是否仍在（Save 按钮灰色＝已保存，不用再点）。' +
+        '两项都正常却仍缺失，说明是 Google 对未验证应用不授予敏感范围（gmail.send 属敏感范围，' +
+        '官方要求先通过审核）——这不是配置错误，请停止重试授权，' +
+        '改用已上线的密保问题自助重置，或切换「自有域名 + Brevo」方案。', false);
     }
 
     let email = GMAIL_USER || '(请手动填你授权的 Gmail 地址)';
