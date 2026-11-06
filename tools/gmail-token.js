@@ -41,7 +41,9 @@ const GMAIL_USER = arg('user') || '';
 const NO_BROWSER = argv.includes('--no-browser');
 const PORT = Number(arg('port') || 8765);
 const REDIRECT = `http://127.0.0.1:${PORT}`;
-const SCOPE = 'https://www.googleapis.com/auth/gmail.send openid email';
+// 只请求发信 + 邮箱地址：不要带 openid，否则 Google 会走 OIDC 流程，
+// 在范围未登记时会静默把 gmail.send 丢掉，只回 email/openid。
+const SCOPE = 'https://www.googleapis.com/auth/gmail.send email';
 
 /* ---------------- 代理探测 ---------------- */
 function detectProxy() {
@@ -109,7 +111,7 @@ const authUrl = 'https://accounts.google.com/o/oauth2/v2/auth?' + new URLSearchP
   scope: SCOPE,
   access_type: 'offline',
   prompt: 'consent'              // 强制返回 refresh_token（否则第二次授权就没有了）
-}).toString();
+}).toString().replace(/\+/g, '%20');   // scope 分隔符用 %20，别用 + 免得被当成字面量
 
 function page(title, body) {
   return `<!DOCTYPE html><meta charset="utf-8"><title>${title}</title>
@@ -205,7 +207,7 @@ server.on('error', e => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log('');
   console.log('代理：' + (PROXY || '(直连)'));
-  console.log('⚠️ 授权前请确认：Google Auth Platform → 数据访问 → 「您的受限范围」里');
+  console.log('⚠️ 授权前请确认：Google Auth Platform → 数据访问 → 「您的敏感范围」里');
   console.log('   已有 https://www.googleapis.com/auth/gmail.send，且 Gmail API 已启用。');
   console.log('   否则授权只会给到「邮箱地址」，拿不到发信权限。');
   console.log('');
