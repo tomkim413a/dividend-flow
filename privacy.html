@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>隐私政策 · 股息流 Dividend Flow</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 16px 56px;
+    background: #f6f7fb; color: #2b3040;
+    font: 15px/1.85 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  }
+  .card {
+    max-width: 760px; margin: 0 auto; padding: 36px 40px 44px;
+    background: #fff; border: 1px solid #e8eaf2; border-radius: 18px;
+    box-shadow: 0 8px 30px rgba(38, 48, 80, .06);
+  }
+  h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: .5px; }
+  .meta { margin: 0 0 28px; color: #8790a6; font-size: 13px; }
+  h2 {
+    margin: 30px 0 8px; padding-left: 11px; font-size: 17px; color: #3b4a75;
+    border-left: 4px solid #8fa4e8; border-radius: 2px;
+  }
+  p, li { margin: 6px 0; }
+  ul { margin: 6px 0; padding-left: 22px; }
+  code {
+    padding: 1px 6px; border-radius: 5px; background: #f1f3fa;
+    font-size: 13px; color: #4a5680; word-break: break-all;
+  }
+  a { color: #4a63b8; }
+  .foot {
+    margin-top: 34px; padding-top: 18px; border-top: 1px dashed #e2e6f0;
+    font-size: 13px; color: #8790a6;
+  }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>隐私政策</h1>
+  <p class="meta">应用：股息流（Dividend Flow） · 网址：<a href="https://dividend-flow.onrender.com">dividend-flow.onrender.com</a><br>
+  生效日期：2026 年 11 月 6 日</p>
+
+  <p>本政策说明「股息流」联机功能如何收集、使用与保护你的信息。本游戏为个人开发的非商业作品，仅提供在线对战与账号服务。</p>
+
+  <h2>1. 我们收集哪些信息</h2>
+  <ul>
+    <li><b>注册信息</b>：用户名、邮箱地址、密码、密保问题与答案。</li>
+    <li><b>游戏数据</b>：联机对战产生的战绩统计（对局数、胜场、破产次数、回合数等）。</li>
+    <li><b>技术信息</b>：服务端日志中的 IP 地址与请求时间，仅用于安全审计与防暴力破解。</li>
+  </ul>
+  <p>密码与密保答案均使用 <code>bcrypt</code> 加盐哈希后存储，服务端不保存、也无法还原明文。</p>
+
+  <h2>2. 这些信息用来做什么</h2>
+  <ul>
+    <li>创建账号、登录校验、联机对战与战绩展示；</li>
+    <li>忘记密码时，通过邮箱重置链接或密保问题自助重置密码；</li>
+    <li>对登录、找回密码等接口做失败次数限制，防止暴力破解和滥用。</li>
+  </ul>
+
+  <h2>3. 关于邮件</h2>
+  <p>我们只在你主动使用「忘记密码 → 改用邮箱」时，向你的注册邮箱发送一封包含重置链接的邮件，由本应用配置的 Gmail 账号经 Gmail API 发出。重置链接一次性有效、30 分钟过期。<b>我们不会发送营销邮件，也不会把邮箱地址用于广告或提供给他人。</b></p>
+
+  <h2>4. 存储与安全</h2>
+  <p>账号与战绩数据存放在 Supabase 提供的 PostgreSQL 数据库中；本地开发环境下可能使用本地 JSON 文件。全站通过 HTTPS 传输。除上述基础设施服务商（Render 应用托管、Supabase 数据库、Google Gmail API 发信）为提供服务而处理数据外，我们不会出售、出租或向任何第三方共享你的个人信息。</p>
+
+  <h2>5. 数据保留与删除</h2>
+  <p>账号数据在你使用本游戏期间保留；密码重置令牌在过期后失效并清理。你可以发送邮件至下方联系邮箱申请删除账号及其关联战绩，我们会在核实身份后处理。游戏内未提供的信息我们不会额外索取。</p>
+
+  <h2>6. 浏览器本地存储</h2>
+  <p>我们使用浏览器 <code>localStorage</code> 保存登录令牌与本地游戏设置，用于保持登录状态。这些数据只留在你的设备上，不用于跨站追踪或广告投放。</p>
+
+  <h2>7. 儿童隐私</h2>
+  <p>本游戏不面向 13 岁以下儿童，也不会有意收集儿童的个人信息。</p>
+
+  <h2>8. 政策变更</h2>
+  <p>如本政策有更新，将直接在本页面公布并修改顶部生效日期，不会另行发送通知邮件。</p>
+
+  <h2>9. 联系我们</h2>
+  <p>如对隐私或账号数据有疑问、需要删除账号，请发送邮件至：<a href="mailto:tomkim413@gmail.com">tomkim413@gmail.com</a>。</p>
+
+  <div class="foot"><a href="/">← 返回游戏首页</a></div>
+</main>
+</body>
+</html>
