@@ -127,47 +127,52 @@ https://dividend-flow-xxxx.onrender.com
 >
 > 所以只有两条路：**用邮箱服务商自己的通道发**（下面的 Gmail API，0 元），或**买域名并完成服务商认证**。
 
-### 推荐：Gmail API（0 元，HTTPS 443，Google 签名，QQ/163 能收）
+### 推荐：Gmail API（**完全免费**，HTTPS 443，Google 签名，QQ/163 能收）
 
-代码已支持，只需 4 个环境变量。获取方法：
+> **费用**：Gmail API 标准用量 0 元，**不需要绑信用卡或结算账号**。个人 Gmail 免费，每天约 500 封。
+> 只有用 Google Workspace 企业邮箱、或开放给 >100 个外部用户去做官方验证时才可能产生费用，本项目用不到。
 
-1. 打开 https://console.cloud.google.com → 新建项目（如 `dividend-mail`）
-2. **API 和服务 → 库** → 搜 `Gmail API` → **启用**
-3. **API 和服务 → OAuth 同意屏幕**：
-   - User Type 选 **外部 / External** → 填应用名 + 你的邮箱 → 保存
-   - **Scopes** 里添加 `https://www.googleapis.com/auth/gmail.send`
-   - **Test users** 添加你自己的 Gmail
-   - 最后点 **发布应用 / PUBLISH APP**（重要！停在"测试"状态 refresh_token 7 天就失效）
-4. **API 和服务 → 凭据 → 创建凭据 → OAuth 客户端 ID**：
-   - 应用类型选 **桌面应用 / Desktop app**
-   - 记下 `客户端 ID` 与 `客户端密钥`
-5. 在项目根目录跑一次性授权脚本（会打开浏览器让你点"允许"）：
+代码已支持，只需 4 个环境变量。获取方法（需登录 https://console.cloud.google.com）：
+
+> 新版控制台叫 **Google Auth Platform**（原「OAuth 同意屏幕」），分 `Branding` / `Audience` / `Data Access` / `Clients` 四个页签；
+> 旧菜单 `API 和服务 → OAuth 同意屏幕` 会跳到同一处。
+
+1. 顶部项目下拉 → **New Project** → 名称如 `dividend-mail` → Create，并确认顶部已切换到新项目
+2. **API 和服务 → 库** → 搜 `Gmail API` → **Enable**（漏了最后必报 403）
+3. **Google Auth Platform → Get started** 四步向导：应用名 + 支持邮箱 → Audience 选 **External** → 联系邮箱 → 同意政策 → Create
+4. **Data Access → Add or remove scopes** → 用底部「手动添加范围」粘贴 `https://www.googleapis.com/auth/gmail.send` → Update / Save
+   （只加这一个；不要加 `gmail.modify` / `gmail.readonly`）
+5. **Audience**：Test users 加你自己的 Gmail；然后 **Publish app → Confirm**，状态必须显示 **In production**。
+   ⚠️「测试」状态签发的 refresh_token 只有 7 天寿命。单人自用不需要提交 Google 验证，授权时出现「未验证应用」是正常的，点 **高级 → 继续**。
+   若 Publish 按钮灰色，先在 Branding 填 App homepage / Privacy policy 为 `https://dividend-flow.onrender.com`
+6. **Clients → Create client** → 应用类型选 **Desktop app / 桌面应用** → 记下 Client ID 与 Client secret（桌面应用无需填回调地址）
+7. **发布之后**再跑一次性授权脚本（顺序不能反，否则拿到的还是 7 天 token）：
 
 ```bash
 node tools/gmail-token.js --id <客户端ID> --secret <客户端密钥>
 ```
 
-6. 脚本会打印一段环境变量，复制到 Render → Environment：
+8. 脚本会打印一段环境变量，复制到 **Render → 服务 → Environment**（这些变量不在 `render.yaml` 里，需手动添加）：
 
 | 变量 | 值 |
 |---|---|
-| `APP_URL` | `https://你的服务地址.onrender.com`（结尾不要 `/`） |
+| `APP_URL` | `https://dividend-flow.onrender.com`（结尾不要 `/`） |
 | `GMAIL_USER` | 你授权的 Gmail 地址 |
-| `GMAIL_CLIENT_ID` | 第 4 步的客户端 ID |
-| `GMAIL_CLIENT_SECRET` | 第 4 步的客户端密钥 |
-| `GMAIL_REFRESH_TOKEN` | 第 5 步脚本打印的 refresh_token |
+| `GMAIL_CLIENT_ID` | 第 6 步的客户端 ID |
+| `GMAIL_CLIENT_SECRET` | 第 6 步的客户端密钥 |
+| `GMAIL_REFRESH_TOKEN` | 第 7 步脚本打印的 refresh_token |
+| `ADMIN_TOKEN` | 自定义长随机串，用于 `/api/mail/diag` 自检 |
 
-7. 部署后日志应出现：
+9. 部署后日志应出现：
 
 ```
 [mail] 邮件服务：gmail，发件人=你@gmail.com
 [mail] 通道自检通过（gmail）
 ```
 
-若出现 `[mail] 通道自检失败：Gmail 授权失败 invalid_grant` → OAuth 应用还在"测试"状态（7 天过期），发布为正式版后重新跑第 5 步。
+若出现 `[mail] 通道自检失败：Gmail 授权失败 invalid_grant` → 应用还在"测试"状态（7 天过期），发布为正式版后重跑第 7 步；若已是正式版，则是 6 个月未使用过期，同样重跑脚本即可。服务端已用 `/api/health` 每 3 天自动保活凭据，正常不会再触发。
 
-> 免费额度：个人 Gmail 通过 API 每天可发数百封，小范围游玩完全够用。
-> 想验证是否真的能发：配好 `ADMIN_TOKEN` 后调用 `POST /api/mail/diag`（请求头 `x-admin-token`，body `{"to":"你的QQ邮箱"}`），会直接返回真实结果。
+> 想验证是否真的能发：调用 `POST /api/mail/diag`（请求头 `x-admin-token`，body `{"to":"你的QQ邮箱"}`），会真的发一封测试信并返回服务商原始结果。
 
 ### 备选：自有域名 + Brevo（免费 300 封/天）
 

@@ -122,8 +122,8 @@ function buildMime({ from, to, subject, text, html }) {
 }
 
 /** 用 refresh_token 换 access_token（缓存到过期前 1 分钟） */
-async function gmailAccessToken() {
-  if (gmailTok.token && Date.now() < gmailTok.exp - 60000) return gmailTok.token;
+async function gmailAccessToken(force) {
+  if (!force && gmailTok.token && Date.now() < gmailTok.exp - 60000) return gmailTok.token;
 
   const t = withTimeout(15000);
   try {
@@ -331,7 +331,23 @@ async function selfTest() {
   }
 }
 
+/* 保活：正式版 OAuth 应用的 refresh_token 虽不再 7 天过期，
+   但「连续 6 个月没有用它换过 access_token」仍会失效。
+   游戏里可能半年没人点找回密码，所以借 /api/health 探活每 3 天强制刷新一次。 */
+let lastKeepAlive = 0;
+const KEEPALIVE_MS = 3 * 24 * 60 * 60 * 1000;
+async function keepAlive() {
+  if (backend() !== 'gmail' || Date.now() - lastKeepAlive < KEEPALIVE_MS) return;
+  lastKeepAlive = Date.now();
+  try {
+    await gmailAccessToken(true);
+    console.log('[mail] Gmail 凭据保活刷新成功');
+  } catch (e) {
+    console.warn('[mail] Gmail 凭据保活刷新失败：', e && e.message);
+  }
+}
+
 module.exports = {
-  ready, backend, fromAddress, sendMail, sendResetMail, selfTest,
+  ready, backend, fromAddress, sendMail, sendResetMail, selfTest, keepAlive,
   textBody, htmlBody, SUBJECT
 };
