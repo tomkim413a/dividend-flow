@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>股息流 · 管理员重置密码</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(1200px 800px at 50% -10%,#16233c,#0a1120 60%,#070d18);
+    color:#e8eef7;font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif}
+  .box{width:min(460px,92vw);background:linear-gradient(180deg,#17233f,#101a33);
+    border:1px solid #34508a;border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.6);padding:26px}
+  h1{margin:0 0 6px;font-size:19px}
+  p{color:#9fb0d0;font-size:13px;margin:0 0 14px;line-height:1.7}
+  label{display:block;font-size:12px;color:#8fa3c6;margin:12px 0 4px}
+  input{display:block;width:100%;padding:11px 13px;border-radius:10px;
+    border:1px solid #3a4a63;background:#131c2b;color:#e8eef7;font-size:14px;outline:none}
+  input:focus{border-color:#3ddc97}
+  button{width:100%;margin-top:18px;padding:12px;border:0;border-radius:10px;cursor:pointer;
+    background:linear-gradient(180deg,#3ddc97,#22b47a);color:#062015;font-weight:800;font-size:15px}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  #msg{min-height:22px;margin-top:12px;font-size:13px}
+  #msg.err{color:#ff9b9b}
+  #msg.ok{color:#3ddc97}
+  .warn{margin-top:16px;padding:10px 12px;border-radius:10px;background:#3a2a12;color:#ffcf8a;font-size:12px;line-height:1.6}
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>🔧 管理员 · 重置用户密码</h1>
+    <p>用于"用户收不到重置邮件"时的兜底。需要服务端配置 <code>ADMIN_TOKEN</code>。</p>
+
+    <label>管理员令牌（ADMIN_TOKEN）</label>
+    <input id="token" type="password" placeholder="在 Render 环境变量里设置的那个值" autocomplete="off">
+
+    <label>用户名</label>
+    <input id="user" type="text" placeholder="用户的登录名" autocomplete="off">
+
+    <label>新密码（至少 4 位）</label>
+    <input id="pass" type="text" placeholder="设置一个新密码，然后告诉用户" autocomplete="off">
+
+    <button id="go">确认重置</button>
+    <div id="msg"></div>
+
+    <div class="warn">⚠️ 此页面不对玩家公开，请勿在游戏内放置链接。令牌相当于管理员权限，泄露后请立即在 Render 里更换。</div>
+  </div>
+
+<script>
+  var msg = document.getElementById('msg');
+  var go = document.getElementById('go');
+
+  go.onclick = async function () {
+    var token = document.getElementById('token').value.trim();
+    var username = document.getElementById('user').value.trim();
+    var password = document.getElementById('pass').value;
+    if (!token) { msg.className = 'err'; msg.textContent = '请填写管理员令牌'; return; }
+    if (!username) { msg.className = 'err'; msg.textContent = '请填写用户名'; return; }
+    if (password.length < 4) { msg.className = 'err'; msg.textContent = '新密码至少 4 位'; return; }
+
+    go.disabled = true;
+    msg.className = ''; msg.textContent = '提交中…';
+    try {
+      var r = await fetch('/api/admin/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-token': token },
+        body: JSON.stringify({ username: username, password: password })
+      });
+      var j = await r.json();
+      if (j.err) { msg.className = 'err'; msg.textContent = '❌ ' + j.err; go.disabled = false; return; }
+      msg.className = 'ok'; msg.textContent = '✅ 已重置「' + j.username + '」的密码，请把新密码告诉用户';
+      document.getElementById('pass').value = '';
+    } catch (e) {
+      msg.className = 'err'; msg.textContent = '网络错误，请稍后重试'; go.disabled = false;
+    } finally {
+      go.disabled = false;
+    }
+  };
+</script>
+</body>
+</html>

@@ -79,6 +79,11 @@
       forgotBtn.classList.toggle('hidden', !isLogin);
       submit.textContent = isLogin ? '登录' : (isReg ? '注册' : '发送重置邮件');
       switcher.textContent = isLogin ? '去注册' : '返回登录';
+      const hint = el('auth-hint');
+      if (hint) {
+        hint.textContent = isForgot ? '收不到邮件？请先检查垃圾箱；仍收不到请联系管理员重置。' : '';
+        hint.classList.toggle('hidden', !isForgot);
+      }
       say('');
       p.value = ''; p2.value = '';
       if (isReg) em.value = '';

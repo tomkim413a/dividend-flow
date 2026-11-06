@@ -22,6 +22,7 @@
     padding:8px 10px;font-size:13px;cursor:pointer;margin-right:auto;max-width:150px}
   .ol-msg{min-height:20px;font-size:13px;color:#ffb4b4;margin:4px 0}
   .ol-msg.ok{color:#3ddc97}
+  .ol-hint{font-size:12px;color:#8fa3c6;line-height:1.6;margin:2px 0 6px}
   .ol-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:8px}
   .ol-seats{list-style:none;padding:0;margin:8px 0;max-height:150px;overflow:auto}
   .ol-seats li{padding:6px 10px;border-radius:6px;background:#1b2637;margin-bottom:4px;font-size:14px}
@@ -148,6 +149,7 @@
     <input id="auth-pass" class="ol-input" type="password" placeholder="密码（至少 4 位）">
     <input id="auth-pass2" class="ol-input hidden" type="password" placeholder="确认密码">
     <div id="auth-msg" class="ol-msg"></div>
+    <div id="auth-hint" class="ol-hint hidden"></div>
     <div class="ol-btns">
       <button id="auth-submit" class="btn primary" type="button">登录</button>
       <button id="auth-switch" class="btn" type="button">去注册</button>
