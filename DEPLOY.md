@@ -121,34 +121,65 @@ https://dividend-flow-xxxx.onrender.com
 
 ## 邮件服务（找回密码）
 
-> ⚠️ **云服务器（Render 等）普遍屏蔽出站 SMTP 端口（465/587）**，用 QQ 邮箱 SMTP 会一直 `Connection timeout`。
-> 线上请使用 **HTTPS 邮件 API**（走 443 端口）。
+> ⚠️ 两个坑，踩过就懂：
+> 1. **云服务器（Render 等）屏蔽出站 SMTP 端口（465/587）**，用 QQ 邮箱 SMTP 会一直 `Connection timeout`；
+> 2. **用免费邮箱地址当发件人、经第三方服务器代发，必然过不了 QQ/163 的 SPF/DKIM 校验**，会被判伪造而丢弃——换 Brevo / Mailjet / Resend 都一样。
+>
+> 所以只有两条路：**用邮箱服务商自己的通道发**（下面的 Gmail API，0 元），或**买域名并完成服务商认证**。
 
-### 推荐：Brevo（免费 300 封/天）
+### 推荐：Gmail API（0 元，HTTPS 443，Google 签名，QQ/163 能收）
 
-1. 注册 https://www.brevo.com
-2. 右上头像 → **SMTP & API** → **API Keys** → 创建 API Key
-3. **Settings → Senders, Domains & IPs → Add a sender**，填写发件邮箱并点邮件里的验证链接
-4. Render → Environment 添加：
+代码已支持，只需 4 个环境变量。获取方法：
+
+1. 打开 https://console.cloud.google.com → 新建项目（如 `dividend-mail`）
+2. **API 和服务 → 库** → 搜 `Gmail API` → **启用**
+3. **API 和服务 → OAuth 同意屏幕**：
+   - User Type 选 **外部 / External** → 填应用名 + 你的邮箱 → 保存
+   - **Scopes** 里添加 `https://www.googleapis.com/auth/gmail.send`
+   - **Test users** 添加你自己的 Gmail
+   - 最后点 **发布应用 / PUBLISH APP**（重要！停在"测试"状态 refresh_token 7 天就失效）
+4. **API 和服务 → 凭据 → 创建凭据 → OAuth 客户端 ID**：
+   - 应用类型选 **桌面应用 / Desktop app**
+   - 记下 `客户端 ID` 与 `客户端密钥`
+5. 在项目根目录跑一次性授权脚本（会打开浏览器让你点"允许"）：
+
+```bash
+node tools/gmail-token.js --id <客户端ID> --secret <客户端密钥>
+```
+
+6. 脚本会打印一段环境变量，复制到 Render → Environment：
 
 | 变量 | 值 |
 |---|---|
 | `APP_URL` | `https://你的服务地址.onrender.com`（结尾不要 `/`） |
-| `MAIL_FROM` | 第 3 步验证过的发件邮箱 |
-| `BREVO_API_KEY` | 第 2 步创建的 API Key |
+| `GMAIL_USER` | 你授权的 Gmail 地址 |
+| `GMAIL_CLIENT_ID` | 第 4 步的客户端 ID |
+| `GMAIL_CLIENT_SECRET` | 第 4 步的客户端密钥 |
+| `GMAIL_REFRESH_TOKEN` | 第 5 步脚本打印的 refresh_token |
 
-5. 部署后日志应出现：`[mail] 邮件服务：brevo，发件人=xxx`
+7. 部署后日志应出现：
 
-### 备选：Resend
+```
+[mail] 邮件服务：gmail，发件人=你@gmail.com
+[mail] 通道自检通过（gmail）
+```
 
-设置 `RESEND_API_KEY` + `MAIL_FROM` 即可（需在 Resend 验证发件域名或邮箱）。
+若出现 `[mail] 通道自检失败：Gmail 授权失败 invalid_grant` → OAuth 应用还在"测试"状态（7 天过期），发布为正式版后重新跑第 5 步。
+
+> 免费额度：个人 Gmail 通过 API 每天可发数百封，小范围游玩完全够用。
+> 想验证是否真的能发：配好 `ADMIN_TOKEN` 后调用 `POST /api/mail/diag`（请求头 `x-admin-token`，body `{"to":"你的QQ邮箱"}`），会直接返回真实结果。
+
+### 备选：自有域名 + Brevo（免费 300 封/天）
+
+1. 注册 https://www.brevo.com → **SMTP & API → API Keys** 创建 Key
+2. **Senders, Domains & IPs → Domains** 添加你的域名，按提示在 DNS 加 SPF / DKIM / Brevo 验证记录
+3. Render 填 `MAIL_FROM=no-reply@你的域名`、`BREVO_API_KEY=...`、`APP_URL=...`
 
 ### 传统 SMTP（仅本地/自建服务器）
 
-`SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM`。
-云上使用会超时，不建议。
+`SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM`。云上使用会超时，不建议。
 
-> 未配置任何邮件服务时：注册/登录正常，找回密码会把链接输出到服务端日志（仅适合本地测试）。
+> 未配置邮件服务时：注册/登录正常，**用户仍可用「密保问题」自助重置密码**（注册时必填），因此忘记密码功能不会完全失效。
 
 ## ⚠️ 数据库必须配置（否则账号会丢）
 

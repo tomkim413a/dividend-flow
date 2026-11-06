@@ -140,14 +140,24 @@
   <div class="mback"><div class="mcard" id="mbody"></div></div>
 </div>
 
-<!-- ========== 联机：登录 / 注册 ========== -->
+<!-- ========== 联机：登录 / 注册 / 找回密码 ========== -->
 <div id="auth-overlay" class="hidden">
-  <div class="mback"><div class="mcard" style="max-width:380px">
+  <div class="mback"><div class="mcard" style="max-width:390px">
     <h3 id="auth-title">🌐 联机登录</h3>
     <input id="auth-user" class="ol-input" type="text" placeholder="用户名（最长 16 字）" autocomplete="off">
     <input id="auth-email" class="ol-input hidden" type="email" placeholder="邮箱（用于找回密码）" autocomplete="off">
     <input id="auth-pass" class="ol-input" type="password" placeholder="密码（至少 4 位）">
     <input id="auth-pass2" class="ol-input hidden" type="password" placeholder="确认密码">
+    <!-- 注册：密保问题（忘记密码时不依赖邮件也能自助重置） -->
+    <input id="auth-secq" class="ol-input hidden" type="text" maxlength="40"
+           placeholder="密保问题（例：我的第一只宠物叫什么）" autocomplete="off">
+    <input id="auth-seca" class="ol-input hidden" type="text" maxlength="40"
+           placeholder="密保答案（务必记住，忘记密码时要填）" autocomplete="off">
+    <!-- 找回密码（密保通道）：显示问题 + 填答案 -->
+    <div id="auth-secbox" class="hidden">
+      <div id="auth-secq-text" class="ol-hint">填写用户名后会自动显示你的密保问题</div>
+      <input id="auth-secans" class="ol-input" type="text" maxlength="40" placeholder="密保答案" autocomplete="off">
+    </div>
     <div id="auth-msg" class="ol-msg"></div>
     <div id="auth-hint" class="ol-hint hidden"></div>
     <div class="ol-btns">
@@ -172,6 +182,7 @@
       <button id="lobby-create" class="btn" type="button">建房</button>
       <button id="lobby-join" class="btn" type="button">加入</button>
       <button id="lobby-start" class="btn primary" type="button" disabled>开局</button>
+      <button id="lobby-sec" class="btn ghost" type="button" title="设置/修改密保问题">🔐 密保</button>
       <button id="lobby-close" class="btn ghost" type="button">离开</button>
     </div>
   </div></div>

@@ -50,7 +50,10 @@
     })), Promise.resolve());
   }
 
-  /* ---------------- 登录 / 注册 / 找回密码 ---------------- */
+  /* ---------------- 登录 / 注册 / 找回密码 ----------------
+     找回密码两条通道：
+       · 密保问题（默认，不依赖邮件，永远可用）
+       · 邮箱重置邮件（需要可靠的发信通道，可能进垃圾箱）   */
   function showAuth(onOk) {
     const box = el('auth-overlay');
     if (!box) return;
@@ -58,6 +61,8 @@
 
     const title = el('auth-title'), u = el('auth-user'), em = el('auth-email');
     const p = el('auth-pass'), p2 = el('auth-pass2'), msg = el('auth-msg');
+    const secQ = el('auth-secq'), secA = el('auth-seca');
+    const secBox = el('auth-secbox'), secQText = el('auth-secq-text'), secAns = el('auth-secans');
     const submit = el('auth-submit'), switcher = el('auth-switch'), forgotBtn = el('auth-forgot');
     let mode = 'login';
 
@@ -65,29 +70,59 @@
       msg.textContent = text || '';
       msg.classList.toggle('ok', !!ok);
     };
+    const show = (node, on) => { if (node) node.classList.toggle('hidden', !on); };
+
+    /* 取密保问题（只在"密保找回"模式用） */
+    async function loadQuestion() {
+      const name = u.value.trim();
+      if (!name) { secQText.textContent = '请先填写用户名'; return; }
+      secQText.textContent = '正在获取密保问题…';
+      const r = await post('/api/recover/question', { username: name });
+      secQText.textContent = r.err ? '⚠️ ' + r.err : '密保问题：' + r.q;
+    }
 
     function setMode(m, prefill) {
       mode = m;
-      const isLogin = m === 'login', isReg = m === 'register', isForgot = m === 'forgot';
-      title.textContent = isLogin ? '🌐 联机登录' : (isReg ? '📝 注册账号' : '🔑 找回密码');
-      // 找回密码也保留用户名（可选）：填了就能"用户名 + 邮箱"双重校验，定位更准
-      u.classList.remove('hidden');
-      u.placeholder = isForgot ? '用户名（可选，填了更准确）' : '用户名（最长 16 字）';
-      p.classList.toggle('hidden', isForgot);
-      em.classList.toggle('hidden', !(isReg || isForgot));
-      p2.classList.toggle('hidden', !isReg);
-      forgotBtn.classList.toggle('hidden', !isLogin);
-      submit.textContent = isLogin ? '登录' : (isReg ? '注册' : '发送重置邮件');
+      const isLogin = m === 'login', isReg = m === 'register';
+      const isSec = m === 'forgot', isMail = m === 'forgotmail';
+      const isForgot = isSec || isMail;
+
+      title.textContent = isLogin ? '🌐 联机登录'
+        : isReg ? '📝 注册账号'
+          : isSec ? '🔑 密保问题找回' : '📧 邮箱找回密码';
+
+      show(u, true);
+      u.placeholder = isForgot ? '用户名（必填）' : '用户名（最长 16 字）';
+      show(em, isReg || isMail);
+      show(p, !isMail);                       // 登录/注册 = 密码；密保找回 = 新密码
+      p.placeholder = isSec ? '新密码（至少 4 位）' : '密码（至少 4 位）';
+      show(p2, isReg || isSec);
+      p2.placeholder = isSec ? '确认新密码' : '确认密码';
+      show(secQ, isReg);
+      show(secA, isReg);
+      show(secBox, isSec);
+      show(forgotBtn, isLogin || isForgot);
+      forgotBtn.textContent = isSec ? '改用邮箱' : '忘记密码';
+      submit.textContent = isLogin ? '登录' : isReg ? '注册' : isSec ? '重置密码' : '发送重置邮件';
       switcher.textContent = isLogin ? '去注册' : '返回登录';
+
       const hint = el('auth-hint');
       if (hint) {
-        hint.textContent = isForgot ? '收不到邮件？请先检查垃圾箱；仍收不到请联系管理员重置。' : '';
-        hint.classList.toggle('hidden', !isForgot);
+        hint.textContent = isReg ? '密保问题用于忘记密码时自助重置，不依赖邮箱，请填个好记的'
+          : isSec ? '答对了就能直接设置新密码；答案不区分大小写'
+            : isMail ? '收不到邮件？可以直接用「改用密保」重置，更可靠'
+              : '';
+        show(hint, isReg || isForgot);
       }
+
       say('');
-      p.value = ''; p2.value = '';
-      if (isReg) em.value = '';
+      p.value = ''; p2.value = ''; secAns.value = '';
+      if (isReg) { em.value = ''; secQ.value = ''; secA.value = ''; }
       if (prefill) u.value = prefill;
+      if (isSec) {
+        secQText.textContent = '填写用户名后会自动显示你的密保问题';
+        if (u.value.trim()) loadQuestion();
+      }
     }
 
     submit.onclick = async () => {
@@ -101,12 +136,18 @@
       }
 
       if (mode === 'register') {
+        if (!u.value.trim()) return say('❌ 请填写用户名');
         if (!em.value.trim()) return say('❌ 请填写邮箱');
+        if (!secQ.value.trim()) return say('❌ 请填写密保问题（例：我的第一只宠物叫什么）');
+        if (!secA.value.trim()) return say('❌ 请填写密保答案（忘记密码时要靠它）');
         if (p.value !== p2.value) return say('❌ 两次输入的密码不一致');
         if (p.value.length < 4) return say('❌ 密码至少 4 位');
+        submit.disabled = true;
         const r = await post('/api/register', {
-          username: u.value, email: em.value.trim(), password: p.value
+          username: u.value, email: em.value.trim(), password: p.value,
+          secQ: secQ.value.trim(), secA: secA.value.trim()
         });
+        submit.disabled = false;
         if (r.err) return say('❌ ' + r.err);
         // 注册成功 → 回到登录界面（不自动登录）
         setMode('login', u.value.trim());
@@ -114,19 +155,41 @@
         return;
       }
 
-      // 找回密码
+      if (mode === 'forgot') {
+        if (!u.value.trim()) return say('❌ 请先填写用户名');
+        if (!secAns.value.trim()) return say('❌ 请填写密保答案');
+        if (p.value.length < 4) return say('❌ 新密码至少 4 位');
+        if (p.value !== p2.value) return say('❌ 两次输入的密码不一致');
+        submit.disabled = true;
+        const r = await post('/api/recover/reset', {
+          username: u.value.trim(), answer: secAns.value, password: p.value
+        });
+        submit.disabled = false;
+        if (r.err) return say('❌ ' + r.err);
+        setMode('login', u.value.trim());
+        say('✅ 密码已重置，请用新密码登录', true);
+        return;
+      }
+
+      // 邮箱找回
       if (!em.value.trim()) return say('❌ 请填写注册时用的邮箱');
       const r = await post('/api/forgot', { email: em.value.trim(), username: u.value.trim() });
       if (r.err) return say('❌ ' + r.err);
       let tip = '✅ 如果该账号存在，重置邮件已发送，请查收（含垃圾箱）';
-      if (r.warn) tip += '\n⚠️ ' + r.warn;
+      if (r.warn) tip += '；⚠️ ' + r.warn;
       say(tip, true);
       if (r.devLink) console.log('[dev] 重置链接：', r.devLink);
     };
 
     switcher.onclick = () => setMode(mode === 'login' ? 'register' : 'login', u.value.trim());
-    forgotBtn.onclick = () => setMode('forgot');
+    forgotBtn.onclick = () => setMode(mode === 'forgot' ? 'forgotmail' : 'forgot', u.value.trim());
     el('auth-close').onclick = () => box.classList.add('hidden');
+
+    // 改用户名后重新取密保问题，避免对着别人的问题答答案
+    u.addEventListener('blur', () => { if (mode === 'forgot') loadQuestion(); });
+    u.addEventListener('input', () => {
+      if (mode === 'forgot') secQText.textContent = '填写用户名后会自动显示你的密保问题';
+    });
 
     setMode('login');
   }
@@ -182,6 +245,28 @@
     };
     el('lobby-start').onclick = () => NET.send(CS.START_GAME);
     el('lobby-close').onclick = () => { box.classList.add('hidden'); NET.disconnect(); };
+
+    // 老账号补设密保问题（邮箱功能上线前注册的账号没有，忘记密码就只能找管理员）
+    const secBtn = el('lobby-sec');
+    if (secBtn) secBtn.onclick = async () => {
+      const q = window.prompt('设置密保问题（忘记密码时用它自助重置）\n例：我的第一只宠物叫什么');
+      if (q === null) return;
+      if (q.trim().length < 2) { msg.textContent = '⚠️ 密保问题至少 2 个字'; return; }
+      const a = window.prompt('密保答案（一定要记住，不区分大小写）');
+      if (a === null) return;
+      if (a.trim().length < 2) { msg.textContent = '⚠️ 密保答案至少 2 个字'; return; }
+      try {
+        const r = await fetch('/api/account/security', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (getToken() || '') },
+          body: JSON.stringify({ secQ: q.trim(), secA: a.trim() })
+        });
+        const j = await r.json().catch(() => ({}));
+        msg.textContent = j.err ? '⚠️ ' + j.err : '✅ 密保问题已保存，忘记密码时可用它重置';
+      } catch (e) {
+        msg.textContent = '⚠️ 网络错误，请稍后重试';
+      }
+    };
   }
 
   /* ---------------- 进入对局后的持续同步 ---------------- */

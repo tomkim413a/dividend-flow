@@ -5,7 +5,7 @@
  *   ② 未配置            → JSON 文件（本地开发零配置，开箱即跑）
  *
  * 表：
- *   users          账号（含邮箱，用于找回密码）
+ *   users          账号（含邮箱与密保问题，用于找回密码）
  *   stats          战绩
  *   password_resets 重置令牌（一次性、30 分钟过期）
  * ============================================================ */
@@ -63,6 +63,7 @@ function save(db) {
 function rowToUser(r) {
   return r ? {
     id: r.id, username: r.username, email: r.email || '',
+    secQ: r.sec_q || '', secAHash: r.sec_a || '',
     passHash: r.pass_hash, createdAt: Number(r.created_at)
   } : null;
 }
@@ -96,6 +97,8 @@ async function init() {
     );
     ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT;
     CREATE UNIQUE INDEX IF NOT EXISTS users_email_key ON users (email) WHERE email IS NOT NULL;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS sec_q TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS sec_a TEXT;
     CREATE TABLE IF NOT EXISTS password_resets (
       token      TEXT PRIMARY KEY,
       user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -146,8 +149,9 @@ const Users = {
   async add(user) {
     if (USE_PG) {
       await getPool().query(
-        'INSERT INTO users (id, username, email, pass_hash, created_at) VALUES ($1, $2, $3, $4, $5)',
-        [user.id, user.username, user.email || null, user.passHash, user.createdAt]
+        'INSERT INTO users (id, username, email, pass_hash, created_at, sec_q, sec_a) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+        [user.id, user.username, user.email || null, user.passHash, user.createdAt,
+          user.secQ || null, user.secAHash || null]
       );
       return user;
     }
@@ -155,6 +159,21 @@ const Users = {
     db.users.push(user);
     save(db);
     return user;
+  },
+
+  async setSecurity(userId, secQ, secAHash) {
+    if (USE_PG) {
+      await getPool().query('UPDATE users SET sec_q = $1, sec_a = $2 WHERE id = $3',
+        [String(secQ), String(secAHash), String(userId)]);
+      return true;
+    }
+    const db = load();
+    const u = db.users.find(x => x.id === userId);
+    if (!u) return false;
+    u.secQ = secQ;
+    u.secAHash = secAHash;
+    save(db);
+    return true;
   },
 
   async updatePassword(userId, passHash) {

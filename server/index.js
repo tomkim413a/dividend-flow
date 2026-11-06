@@ -59,12 +59,54 @@ app.get('/api/health', (req, res) => {
 /* ---------------- 账号 API ---------------- */
 app.post('/api/register', async (req, res) => {
   try {
-    const { username, email, password } = req.body || {};
-    const r = await auth.register(username, email, password);
+    const { username, email, password, secQ, secA } = req.body || {};
+    const r = await auth.register(username, email, password, secQ, secA);
     if (r.err) return res.status(400).json({ err: r.err });
     res.json({ ok: true, user: r.user });     // 不返回 token：注册后去登录
   } catch (e) {
     console.error('[register]', e);
+    res.status(500).json({ err: '服务器繁忙，请稍后重试' });
+  }
+});
+
+/* 找回密码 · 通道二：密保问题（不依赖邮件，永远可用）
+   第一步：拿问题；第二步：校验答案并重置 */
+app.post('/api/recover/question', async (req, res) => {
+  try {
+    const { username } = req.body || {};
+    const r = await auth.recoverQuestion(username);
+    if (r.err) return res.status(400).json({ err: r.err });
+    res.json(r);
+  } catch (e) {
+    console.error('[recover-question]', e);
+    res.status(500).json({ err: '服务器繁忙，请稍后重试' });
+  }
+});
+
+app.post('/api/recover/reset', async (req, res) => {
+  try {
+    const { username, answer, password } = req.body || {};
+    const r = await auth.resetBySecurity(username, answer, password);
+    if (r.err) return res.status(400).json({ err: r.err });
+    res.json(r);
+  } catch (e) {
+    console.error('[recover-reset]', e);
+    res.status(500).json({ err: '服务器繁忙，请稍后重试' });
+  }
+});
+
+/* 已登录用户设置 / 修改密保问题（给老账号补票） */
+app.post('/api/account/security', async (req, res) => {
+  try {
+    const t = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const p = auth.verify(t);
+    if (!p) return res.status(401).json({ err: '登录已过期，请重新登录' });
+    const { secQ, secA } = req.body || {};
+    const r = await auth.setSecurity(p.id, secQ, secA);
+    if (r.err) return res.status(400).json({ err: r.err });
+    res.json(r);
+  } catch (e) {
+    console.error('[account-security]', e);
     res.status(500).json({ err: '服务器繁忙，请稍后重试' });
   }
 });
@@ -99,6 +141,41 @@ app.post('/api/admin/reset', async (req, res) => {
   }
 });
 
+/* 邮件通道自检（需 ADMIN_TOKEN）：能直接看到当前用的是哪个后端、发件人是谁、
+   以及真实报错，专治"日志写着 sent=true 但用户收不到"。带 to 参数会真的发一封测试信。 */
+app.post('/api/mail/diag', async (req, res) => {
+  const expect = String(process.env.ADMIN_TOKEN || '').trim();
+  const got = String(req.headers['x-admin-token'] || (req.body && req.body.token) || '').trim();
+  if (!expect) return res.status(503).json({ err: '未配置 ADMIN_TOKEN，自检不可用' });
+  if (got !== expect) return res.status(403).json({ err: '管理员令牌错误' });
+
+  const backend = mailer.backend();
+  const out = { backend, from: mailer.fromAddress() || '(未设置)' };
+  try {
+    const st = await mailer.selfTest();
+    out.credentials = st.ok ? 'ok' : ('失败：' + st.err);
+    if (st.ok && st.err) out.note = st.err;
+
+    const to = String((req.body && req.body.to) || '').trim();
+    if (to) {
+      const link = `${String(process.env.APP_URL || '').replace(/\/+$/, '')}/reset.html?token=diag`;
+      const r = await mailer.sendMail(
+        to,
+        '股息流 · 邮件通道自检',
+        `这是一封自检邮件。收到说明发信通道可用。\n重置链接示例：${link}`,
+        `<p>这是一封<b>自检邮件</b>，收到说明发信通道可用。</p><p style="color:#888">重置链接示例：${link}</p>`
+      );
+      out.testTo = to;
+      out.testSent = !!r.sent;
+      if (r.err) out.testErr = r.err;
+    }
+    res.json(out);
+  } catch (e) {
+    console.error('[mail-diag]', e);
+    res.status(500).json({ err: String(e && e.message || e) });
+  }
+});
+
 /* 重置密码 */
 app.post('/api/reset', async (req, res) => {
   try {
@@ -129,10 +206,18 @@ app.get('/api/me', async (req, res) => {
   const p = auth.verify(t);
   if (!p) return res.status(401).json({ err: '未登录' });
   try {
-    res.json({ user: { id: p.id, username: p.name }, stats: await db.Stats.get(p.id) });
+    const u = await db.Users.findById(p.id);
+    res.json({
+      user: { id: p.id, username: p.name },
+      hasSec: !!(u && u.secQ),
+      stats: await db.Stats.get(p.id)
+    });
   } catch (e) {
     console.error('[me]', e);
-    res.json({ user: { id: p.id, username: p.name }, stats: { games: 0, wins: 0, bankrupt: 0, turnsSum: 0 } });
+    res.json({
+      user: { id: p.id, username: p.name }, hasSec: true,
+      stats: { games: 0, wins: 0, bankrupt: 0, turnsSum: 0 }
+    });
   }
 });
 
@@ -270,12 +355,20 @@ io.on('connection', socket => {
   }
   const mailBackend = mailer.backend();
   if (mailBackend === 'none') {
-    console.warn('[mail] 未配置邮件服务：找回密码不会发信，只会把重置链接打印到日志。');
+    console.warn('[mail] 未配置邮件服务：找回密码不会发信，用户仍可用「密保问题」自助重置。');
   } else {
     console.log(`[mail] 邮件服务：${mailBackend}，发件人=${mailer.fromAddress() || '(未设置)'}`);
     if (mailBackend === 'smtp') {
-      console.warn('[mail] 注意：云服务器（Render 等）常屏蔽 SMTP 端口，若发信超时请改用 BREVO_API_KEY。');
+      console.warn('[mail] 注意：云服务器（Render 等）常屏蔽 SMTP 端口，若发信超时请改用 GMAIL_*。');
     }
+    if (mailBackend === 'gmail' && mailer.fromAddress() !== String(process.env.GMAIL_USER || '').trim()) {
+      console.warn('[mail] 提醒：发件人应等于 GMAIL_USER（授权账号），否则 Google 会拒发。');
+    }
+    // 真的去验证一次凭据，避免"看着配好了、实际每次发信都失败"
+    mailer.selfTest().then(st => {
+      if (st.ok) console.log(`[mail] 通道自检通过（${st.backend}）`);
+      else console.error(`[mail] 通道自检失败：${st.err}`);
+    });
   }
   server.listen(PORT, () => {
     console.log(`股息流 · 联机服务端已启动： http://localhost:${PORT}  (db=${info.mode})`);
