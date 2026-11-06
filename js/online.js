@@ -66,6 +66,16 @@
     const submit = el('auth-submit'), switcher = el('auth-switch'), forgotBtn = el('auth-forgot');
     let mode = 'login';
 
+    /* 邮件找回默认对玩家隐藏：只有服务端确认发信通道真的可用（MAIL_ENABLED=true）才显示入口。
+       否则会出现「提示已发送但邮件被 QQ/163 拒收」的假成功——那正是本项目最初的故障。
+       拿不到 health 时保持隐藏，密保问题找回始终可用。 */
+    let mailEnabled = false;
+    fetch('/api/health').then(r => r.json()).then(h => {
+      if (!h || !h.mailEnabled) return;
+      mailEnabled = true;
+      if (mode === 'forgot') show(forgotBtn, true);
+    }).catch(() => {});
+
     const say = (text, ok) => {
       msg.textContent = text || '';
       msg.classList.toggle('ok', !!ok);
@@ -101,7 +111,7 @@
       show(secQ, isReg);
       show(secA, isReg);
       show(secBox, isSec);
-      show(forgotBtn, isLogin || isForgot);
+      show(forgotBtn, isLogin || isMail || (isSec && mailEnabled));
       forgotBtn.textContent = isSec ? '改用邮箱' : '忘记密码';
       submit.textContent = isLogin ? '登录' : isReg ? '注册' : isSec ? '重置密码' : '发送重置邮件';
       switcher.textContent = isLogin ? '去注册' : '返回登录';

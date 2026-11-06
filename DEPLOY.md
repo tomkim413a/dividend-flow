@@ -162,6 +162,12 @@ node tools/gmail-token.js --id <客户端ID> --secret <客户端密钥>
 | `GMAIL_CLIENT_SECRET` | 第 6 步的客户端密钥 |
 | `GMAIL_REFRESH_TOKEN` | 第 7 步脚本打印的 refresh_token |
 | `ADMIN_TOKEN` | 自定义长随机串，用于 `/api/mail/diag` 自检 |
+| `MAIL_ENABLED` | **确认能收到信之后**再设 `true`，用于开放玩家的邮箱找回入口 |
+
+> ⚠️ **邮件找回默认对玩家隐藏**：`MAIL_ENABLED` 未开启时，`/api/forgot` 会明确返回
+> 「邮件找回暂未开放」，登录框也不显示「改用邮箱」入口 —— 避免出现「提示已发送但被
+> QQ/163 拒收」的假成功（这正是本项目最初的故障）。忘记密码统一走密保问题自助重置。
+> 配好邮件后先用 `POST /api/mail/diag` 真发一封到自己邮箱确认收到，再加 `MAIL_ENABLED=true`。
 
 9. 部署后日志应出现：
 

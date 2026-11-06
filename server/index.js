@@ -53,7 +53,7 @@ app.get('/protocol.js', (req, res) => res.sendFile(path.join(__dirname, 'protoco
 
 /* ---------------- 健康检查（Render 探活 / 保活 ping 用） ---------------- */
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, db: db.getMode(), time: Date.now() });
+  res.json({ ok: true, db: db.getMode(), mailEnabled: auth.mailEnabled(), time: Date.now() });
   // 顺带保活 Gmail 凭据，避免半年无人找回密码导致 refresh_token 失效（不阻塞响应）
   mailer.keepAlive();
 });

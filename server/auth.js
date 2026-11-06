@@ -20,6 +20,17 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const RESET_TTL = 30 * 60 * 1000;      // 重置链接 30 分钟有效
 
+/**
+ * 邮件找回开关（默认关闭）。
+ * 本项目最初故障就是「服务端提示已发送，用户却收不到」——免费邮箱当发件人经第三方
+ * 服务器代发，SPF/DKIM 校验失败被 QQ/163 拒收。在确认发信通道真正可用之前，
+ * 不再让用户走这条会给假希望的路；忘记密码统一走密保问题自助重置。
+ * 配好自有域名 + Brevo（或 Gmail API 验证通过）后，在 Render 设 MAIL_ENABLED=true 即恢复。
+ */
+function mailEnabled() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.MAIL_ENABLED || '').trim());
+}
+
 /* 密保答案防爆破：同一用户名 10 分钟内最多错 5 次 */
 const SEC_MAX_FAIL = 5;
 const SEC_WINDOW = 10 * 60 * 1000;
@@ -99,6 +110,9 @@ async function login(username, password) {
  * 无论账号是否存在都返回 ok（避免被用来探测注册情况），但服务端日志会写清原因。
  */
 async function forgot(email, username) {
+  if (!mailEnabled()) {
+    return { err: '邮件找回暂未开放，请使用「忘记密码 → 密保问题」自助重置（不依赖邮箱）' };
+  }
   email = String(email || '').trim();
   username = String(username || '').trim();
   if (!EMAIL_RE.test(email)) return { err: '请输入正确的邮箱地址' };
@@ -231,5 +245,5 @@ async function adminReset(username, password) {
 module.exports = {
   register, login, forgot, reset,
   recoverQuestion, resetBySecurity, setSecurity,
-  adminReset, verify, publicUser
+  adminReset, verify, publicUser, mailEnabled
 };
