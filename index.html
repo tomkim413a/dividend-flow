@@ -144,10 +144,10 @@
 <div id="auth-overlay" class="hidden">
   <div class="mback"><div class="mcard" style="max-width:390px">
     <h3 id="auth-title">🌐 联机登录</h3>
-    <input id="auth-user" class="ol-input" type="text" placeholder="用户名（最长 16 字）" autocomplete="off">
-    <input id="auth-email" class="ol-input hidden" type="email" placeholder="邮箱（用于找回密码）" autocomplete="off">
-    <input id="auth-pass" class="ol-input" type="password" placeholder="密码（至少 4 位）">
-    <input id="auth-pass2" class="ol-input hidden" type="password" placeholder="确认密码">
+    <input id="auth-user" name="username" class="ol-input" type="text" placeholder="用户名（最长 16 字）" autocomplete="username">
+    <input id="auth-email" name="email" class="ol-input hidden" type="email" placeholder="邮箱（用于找回密码）" autocomplete="email">
+    <input id="auth-pass" name="password" class="ol-input" type="password" placeholder="密码（至少 4 位）" autocomplete="current-password">
+    <input id="auth-pass2" class="ol-input hidden" type="password" placeholder="确认密码" autocomplete="new-password">
     <!-- 注册：密保问题（忘记密码时不依赖邮件也能自助重置） -->
     <input id="auth-secq" class="ol-input hidden" type="text" maxlength="40"
            placeholder="密保问题（例：我的第一只宠物叫什么）" autocomplete="off">

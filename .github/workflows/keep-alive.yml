@@ -1,0 +1,31 @@
+# Render 免费实例 15 分钟无请求会自动休眠，首次唤醒需 30–60 秒。
+# 这个定时任务每 10 分钟 ping 一次 /api/health，让实例一直保持热状态。
+# 公共仓库的 Actions 免费；只发 HTTP 请求，不改动代码、不产生 commit。
+name: Keep Render instance awake
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'      # UTC，每 10 分钟
+  workflow_dispatch:            # 也允许在 Actions 页手动点一次
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping /api/health
+        run: |
+          URL="https://dividend-flow.onrender.com/api/health"
+          for i in 1 2 3; do
+            CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" -m 90 "$URL" || true)
+            BODY=$(cat /tmp/health.json 2>/dev/null | head -c 200)
+            echo "attempt $i: HTTP $CODE  $BODY"
+            if [ "$CODE" = "200" ]; then echo "instance is awake"; exit 0; fi
+            sleep 10
+          done
+          # 不标红：冷启动慢属正常，下一次 cron 会再试
+          echo "health did not return 200 this run (instance may be cold-starting); will retry next cycle"
+          exit 0

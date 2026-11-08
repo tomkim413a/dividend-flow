@@ -209,15 +209,19 @@ const BGM = (function () {
     });
     syncUI();
 
-    /* 首次交互（或 3 秒后兜底）才启动完整预取：不抢首屏、登录和联机握手的带宽 */
+    /* 首次交互（或 8 秒后兜底）才启动完整预取：不抢首屏、登录和联机握手的带宽。
+       正在唤醒/连接服务器时继续避让——免费实例冷启动那几十秒里，
+       再多一路 2.9MB 音频下载会明显拖慢登录请求。 */
     const kick = () => {
       if (prefetchStarted) return;
+      if (window.__DF_NET_BUSY) { setTimeout(kick, 4000); return; }
       prefetchStarted = true;
       prefetch(scene);
     };
-    document.addEventListener('pointerdown', kick, { once: true });
-    document.addEventListener('keydown', kick, { once: true });
-    setTimeout(kick, 3000);
+    const onGesture = () => { kick(); };
+    document.addEventListener('pointerdown', onGesture);
+    document.addEventListener('keydown', onGesture);
+    setTimeout(kick, 8000);
 
     play('setup');                          // 开始界面 BGM
   }

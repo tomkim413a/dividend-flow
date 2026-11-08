@@ -91,7 +91,7 @@ https://dividend-flow-xxxx.onrender.com
 
 | 项目 | 作用 | 做法 |
 |---|---|---|
-| 保活，减少冷启动 | 免费实例 15 分钟无请求会休眠 | 用 https://cron-job.org 建一个每 10 分钟 GET `https://你的域名/api/health` 的任务 |
+| 保活，减少冷启动 | 免费实例 15 分钟无请求会休眠，首次唤醒 30–60 秒 | **已内置**：`.github/workflows/keep-alive.yml` 每 10 分钟 GET `/api/health`（公共仓库 Actions 免费，无需注册第三方）。推送到 GitHub 后自动生效，可在仓库 **Actions → Keep Render instance awake** 里手动 Run workflow 验证。备用：https://cron-job.org 建同样的任务 |
 | 前端走 CDN | 首屏更快 | Cloudflare Pages 连同一仓库，输出目录填项目根，构建命令留空 |
 | 自定义域名 | 好记 | 买域名后绑到 Render（大陆节点需备案；Render 为境外节点，免备案） |
 

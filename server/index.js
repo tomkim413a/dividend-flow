@@ -35,6 +35,22 @@ const io = new socketIo.Server(server, {
 app.set('trust proxy', 1);               // Render / Nginx 反向代理后取真实 IP
 app.use(express.json({ limit: '64kb' }));
 
+/* 只对外提供前端资源。
+   express.static(ROOT) 会把 server/db.js、tools/*.js、package.json、部署文档、
+   .github/ 配置一并公开下载（实测 HTTP 200），属于不必要的信息泄露；
+   万一以后把 .env 放进项目根目录也会直接暴露，因此先挡一道。 */
+app.use((req, res, next) => {
+  let p;
+  try { p = decodeURIComponent(req.path); } catch (e) { return res.status(400).end(); }
+  if (/(^|\/)\./.test(p) ||                                   // .git / .github / .env
+      /^\/(server|tools|node_modules|build)(\/|$)/i.test(p) ||
+      /\.(md|json|sql|ya?ml|log|env|example|bak)$/i.test(p) ||
+      /^\/(serve|main)\.js$/i.test(p)) {
+    return res.status(404).end('Not found');
+  }
+  next();
+});
+
 /* 托管前端（index.html / css / js / BGM / audio）
    音频加长缓存：首次加载后浏览器直接复用，避免跨境反复拉流导致 BGM 断断续续；
    页面与脚本保持 no-cache，保证更新即时生效。 */

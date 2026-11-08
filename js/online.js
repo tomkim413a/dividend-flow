@@ -7,34 +7,53 @@
 (function () {
   'use strict';
   const KEY = 'cf_online_token';
+  const LAST_USER = 'cf_online_lastuser';
 
   const el = id => document.getElementById(id);
   /* token 存 sessionStorage（按标签页隔离）：
      若用 localStorage，同源的多个标签页会共享同一份 token，
-     导致第二个窗口自动登录成同一个人，看起来像“能操控别的玩家”。 */
+     导致第二个窗口自动登录成同一个人，看起来像“能操控别的玩家”。
+     用户名另外存 localStorage 只用于「自动填回输入框」，不含任何凭据。 */
   const getToken = () => { try { return sessionStorage.getItem(KEY); } catch (e) { return null; } };
   const setToken = t => { try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch (e) {} };
+  const getLastUser = () => { try { return localStorage.getItem(LAST_USER) || ''; } catch (e) { return ''; } };
+  const setLastUser = n => { try { n ? localStorage.setItem(LAST_USER, n) : localStorage.removeItem(LAST_USER); } catch (e) {} };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  async function post(p, body) {
-    const once = () => {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 20000);   // 免费实例冷启动可能要 30–60s
-      return fetch(p, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body || {}),
-        signal: ctrl.signal
-      }).finally(() => clearTimeout(timer));
-    };
+  /* 所有请求都必须带超时：fetch 默认永不超时，免费实例冷启动时一个挂在半路的
+     /api/me 会让「点联机对战」后几十秒什么都不弹 —— 表现就是「按键点了没反应」。 */
+  function fetchT(url, opts, ms) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms || 60000);
+    return fetch(url, Object.assign({}, opts, { signal: ctrl.signal }))
+      .finally(() => clearTimeout(timer));
+  }
+
+  /* 唤醒：免费实例 15 分钟无请求会休眠，首次请求需 30–60 秒。
+     先单独把服务叫醒并等它返回，之后的接口都是毫秒级，不用每个请求都硬扛长超时。 */
+  async function wakeUp() {
     try {
-      return await (await once()).json();
+      const r = await fetchT('/api/health?wake=' + Date.now(), { cache: 'no-store' }, 75000);
+      return r.ok;
+    } catch (e) { return false; }
+  }
+
+  async function post(p, body) {
+    const once = () => fetchT(p, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+      cache: 'no-store'
+    }, 30000).then(r => r.json());
+    try {
+      return await once();
     } catch (e) {
-      // 网络失败/超时（常见于免费实例休眠后唤醒）→ 自动重试一次
+      // 隔 2 秒再试一次：立即重试会和第一次一起卡在同一次冷启动窗口里，毫无意义
+      await new Promise(r => setTimeout(r, 2000));
       try {
-        return await (await once()).json();
+        return await once();
       } catch (e2) {
-        return { err: '服务器正在唤醒或网络不稳，请等 30–60 秒后重试' };
+        return { err: '连接超时，服务器可能仍在启动中，请稍后再试（已自动重试一次）' };
       }
     }
   }
@@ -43,9 +62,10 @@
     return srcs.reduce((prev, src) => prev.then(() => new Promise((res, rej) => {
       if (document.querySelector('script[src="' + src + '"]')) return res();
       const s = document.createElement('script');
+      const timer = setTimeout(() => rej(new Error(src + ' 加载超时')), 25000);
       s.src = src;
-      s.onload = res;
-      s.onerror = () => rej(new Error(src + ' 加载失败'));
+      s.onload = () => { clearTimeout(timer); res(); };
+      s.onerror = () => { clearTimeout(timer); rej(new Error(src + ' 加载失败')); };
       document.head.appendChild(s);
     })), Promise.resolve());
   }
@@ -106,6 +126,8 @@
       show(em, isReg || isMail);
       show(p, !isMail);                       // 登录/注册 = 密码；密保找回 = 新密码
       p.placeholder = isSec ? '新密码（至少 4 位）' : '密码（至少 4 位）';
+      // 让浏览器正确区分「记住现有密码」和「保存新密码」
+      p.autocomplete = (isReg || isSec) ? 'new-password' : 'current-password';
       show(p2, isReg || isSec);
       p2.placeholder = isSec ? '确认新密码' : '确认密码';
       show(secQ, isReg);
@@ -121,14 +143,15 @@
         hint.textContent = isReg ? '密保问题用于忘记密码时自助重置，不依赖邮箱，请填个好记的'
           : isSec ? '答对了就能直接设置新密码；答案不区分大小写'
             : isMail ? '收不到邮件？可以直接用「改用密保」重置，更可靠'
-              : '';
-        show(hint, isReg || isForgot);
+              : '账号存在服务器上不会丢；关闭标签页后需重新登录（可让浏览器记住密码）';
+        show(hint, true);
       }
 
       say('');
       p.value = ''; p2.value = ''; secAns.value = '';
       if (isReg) { em.value = ''; secQ.value = ''; secA.value = ''; }
       if (prefill) u.value = prefill;
+      else if (isLogin && !u.value.trim()) u.value = getLastUser();  // 记住上次登录的名字
       if (isSec) {
         secQText.textContent = '填写用户名后会自动显示你的密保问题';
         if (u.value.trim()) loadQuestion();
@@ -136,10 +159,15 @@
     }
 
     submit.onclick = async () => {
+      if (submit.disabled) return;                 // 防连点：一次只发一个请求
       if (mode === 'login') {
+        submit.disabled = true;
+        say('⏳ 正在登录…', true);
         const r = await post('/api/login', { username: u.value, password: p.value });
+        submit.disabled = false;
         if (r.err) return say('❌ ' + r.err);
         setToken(r.token);
+        setLastUser(u.value.trim());
         say('✅ 登录成功，正在进入…', true);
         setTimeout(() => { box.classList.add('hidden'); onOk(r.user); }, 700);
         return;
@@ -299,35 +327,74 @@
     if (!b) return;
     // 桌面 exe（file://）没有联机服务端 → 隐藏该入口，避免误点
     if (location.protocol === 'file:') { b.style.display = 'none'; return; }
-    // 提前唤醒服务端：免费实例休眠后首次请求要 30–60 秒，先在后台 ping 一下
-    try { fetch('/api/health', { cache: 'no-store' }).catch(() => {}); } catch (e) {}
+
+    /* 页面一打开就在后台把服务叫醒（不等它），这样用户填完账号时实例已经热了。
+       页面开着期间每 10 分钟 ping 一次，避免 15 分钟无请求被 Render 休眠。 */
+    try { fetchT('/api/health?boot=' + Date.now(), { cache: 'no-store' }, 8000).catch(() => {}); } catch (e) {}
+    const ping = () => {
+      if (document.visibilityState === 'visible') {
+        try { fetchT('/api/health?ka=' + Date.now(), { cache: 'no-store' }, 8000).catch(() => {}); } catch (e) {}
+      }
+    };
+    setInterval(ping, 10 * 60 * 1000);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') ping(); });
+
     b.addEventListener('click', () => window.startOnline());
   });
 
-  window.startOnline = function () {
-    loadScripts(['/protocol.js', '/socket.io/socket.io.js', 'js/net.js'])
-      .then(async () => {
-        let t = getToken(), me = null;
-        if (t) {
+  let starting = false;
+  window.startOnline = async function () {
+    if (starting) return;                          // 防连点：只跑一套唤醒/加载流程
+    starting = true;
+    window.__DF_NET_BUSY = true;                   // 让 BGM 预取避让关键请求
+    const b = document.getElementById('btn-online');
+    const label = b ? b.textContent : '';
+    const btnState = (text, disabled) => { if (b) { b.textContent = text; b.disabled = !!disabled; } };
+
+    try {
+      btnState('⏳ 正在连接服务器…', true);
+      const alive = await wakeUp();
+      if (!alive) {
+        btnState('⚠️ 连接超时', false);
+        try { window.alert('服务器正在启动（免费实例闲置后首次唤醒约需 30–60 秒）。\n请稍等片刻，再点一次「联机对战」。'); } catch (_) {}
+        return;
+      }
+
+      btnState('⏳ 正在加载联机组件…', true);
+      await loadScripts(['/protocol.js', '/socket.io/socket.io.js', 'js/net.js']);
+
+      let t = getToken(), me = null;
+      if (t) {
+        try {
+          // 必须带超时：旧代码这里是无超时 fetch，冷启动时会一直挂着，登录框永远不弹
+          const r = await fetchT('/api/me', {
+            headers: { Authorization: 'Bearer ' + t }, cache: 'no-store'
+          }, 15000);
+          if (r.ok) me = await r.json();
+        } catch (e) { me = null; }
+      }
+      if (!me) {
+        showAuth(async user => {
           try {
-            const r = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + t }, cache: 'no-store' });
-            if (r.ok) me = await r.json();
-          } catch (e) { me = null; }
-        }
-        if (!me) {
-          showAuth(async user => {
             await NET.connect(getToken(), user);
-            bindGameSync();
-            showLobby(user);
-          });
-        } else {
-          await NET.connect(t, me.user);
+          } catch (e) {
+            try { window.alert('账号已登录，但联机连接失败：' + (e && e.message) + '\n请稍后再点「联机对战」重试。'); } catch (_) {}
+            return;
+          }
           bindGameSync();
-          showLobby(me.user);
-        }
-      })
-      .catch(e => {
-        try { window.alert('联机服务未启动或无法连接：' + (e && e.message)); } catch (_) {}
-      });
+          showLobby(user);
+        });
+      } else {
+        await NET.connect(t, me.user);
+        bindGameSync();
+        showLobby(me.user);
+      }
+    } catch (e) {
+      try { window.alert('联机连接失败：' + (e && e.message) + '\n请检查网络后重试。'); } catch (_) {}
+    } finally {
+      starting = false;
+      window.__DF_NET_BUSY = false;
+      btnState(label, false);
+    }
   };
 })();

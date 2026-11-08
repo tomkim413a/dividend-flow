@@ -27,8 +27,18 @@
     if (typeof io === 'undefined') return Promise.reject(new Error('Socket.IO 客户端未加载'));
     NET.user = user || null;
     return new Promise((resolve, reject) => {
-      const s = io({ auth: { token } });
-      s.on('connect', () => {
+      /* 握手必须带超时：免费实例冷启动 / 跨境丢包时 socket.io 会一直重连，
+         Promise 永不 settle → 登录框消失后大厅也出不来，表现为「登录不了、按键没反应」。 */
+      let settled = false;
+      let timer = null;
+      const finish = fn => { if (settled) return; settled = true; clearTimeout(timer); fn(); };
+      const s = io({ auth: { token }, timeout: 20000, reconnectionAttempts: 3 });
+      timer = setTimeout(() => finish(() => {
+        try { s.disconnect(); } catch (_) {}
+        reject(new Error('连接服务器超时，请稍后重试'));
+      }), 25000);
+
+      s.on('connect', () => finish(() => {
         NET.socket = s;
         NET.on = true;
         // 断线重连后：回到原房间并取消 AI 托管（首次连接时 NET.room 为空，不会触发）
@@ -39,8 +49,11 @@
         s.on(SC.GAME_OVER, g => emit('over', g));
         s.on('disconnect', () => { NET.on = false; emit('disconnect'); });
         resolve(s);
-      });
-      s.on('connect_error', e => reject(e));
+      }));
+      s.on('connect_error', e => finish(() => {
+        try { s.disconnect(); } catch (_) {}
+        reject(e);
+      }));
     });
   };
 
