@@ -33,29 +33,64 @@
       .finally(() => clearTimeout(timer));
   }
 
-  async function post(p, body) {
+  /* 网络类失败统一给出可操作建议：实测开启本地代理时访问 onrender.com 会整体超时，
+     关掉即恢复。以前只说「请稍后再试」，用户无从判断原因。 */
+  const NET_HINT = '连不上服务器（已自动重试一次）。若电脑开了代理 / VPN / 加速器，请先关闭再试；也可能是服务器正在唤醒，稍后重试';
+
+  async function post(p, body, ms) {
+    const timeout = ms || 15000;
     const once = () => fetchT(p, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {}),
       cache: 'no-store'
-    }, 25000).then(r => r.json());
+    }, timeout).then(r => r.json());
     try {
       return await once();
     } catch (e) {
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, 1200));
       try {
         return await once();
       } catch (e2) {
-        return { err: '连接不上服务器，请稍后再试（已自动重试一次）' };
+        return { err: NET_HINT };
       }
     }
+  }
+
+  /* ---------------- 网络状态浮层 ----------------
+     动态创建、不占 index.html；pointer-events:none 保证绝不挡住游戏按钮。 */
+  let netToastEl = null;
+  function netToast(text, ok) {
+    if (!text) {
+      if (netToastEl) netToastEl.style.display = 'none';
+      return;
+    }
+    if (!netToastEl) {
+      const d = document.createElement('div');
+      d.id = 'net-toast';
+      d.style.cssText = 'position:fixed;left:50%;top:12px;transform:translateX(-50%);'
+        + 'z-index:99999;max-width:min(92vw,600px);padding:10px 16px;border-radius:10px;'
+        + 'font:14px/1.5 system-ui,-apple-system,"Microsoft YaHei",sans-serif;'
+        + 'box-shadow:0 6px 24px rgba(0,0,0,.3);pointer-events:none;'
+        + 'text-align:center;white-space:normal;';
+      if (document.body) document.body.appendChild(d);
+      netToastEl = d;
+    }
+    netToastEl.textContent = text;
+    netToastEl.style.display = 'block';
+    netToastEl.style.background = ok ? '#12694a' : '#7d2b18';
+    netToastEl.style.color = '#fff';
+    netToastEl.style.border = '1px solid ' + (ok ? '#2fb37a' : '#d9613f');
+    clearTimeout(netToastEl._hide);
+    if (ok) netToastEl._hide = setTimeout(() => {
+      if (netToastEl) netToastEl.style.display = 'none';
+    }, 3000);
   }
 
   /* ---------------- 联机组件：后台顺序加载 ----------------
      顺序加载最稳：protocol.js → socket.io → net.js，后者依赖前者的 CS/SC/io。
      全程后台、失败可重试，不再阻塞登录框，也不再弹「加载超时」alert。 */
-  const SCRIPTS = ['/protocol.js', '/socket.io/socket.io.js', 'js/net.js'];
+  const SCRIPTS = ['/protocol.js', '/socket.io/socket.io.js', 'js/net.js?v=20261108d'];
   let scriptsPromise = null;
   function loadScripts() {
     if (scriptsPromise) return scriptsPromise;
@@ -123,7 +158,8 @@
       .catch(e => {
         netPromise = null;                       // 允许「重试连接」再试一次
         setLobbyFailed();
-        lobbyMsg('⚠️ ' + ((e && e.message) || '连接失败') + '，可点「重试连接」');
+        const msg = (e && e.message) || '连接失败';
+        lobbyMsg('⚠️ ' + msg + '，可点「重试连接」。若开了代理 / VPN 请先关闭');
         throw e;
       });
     return netPromise;
@@ -216,7 +252,7 @@
       if (mode === 'login') {
         submit.disabled = true;
         say('⏳ 正在登录…', true);
-        const r = await post('/api/login', { username: u.value, password: p.value });
+        const r = await post('/api/login', { username: u.value, password: p.value }, 12000);
         submit.disabled = false;
         if (r.err) return say('❌ ' + r.err);
         setToken(r.token);
@@ -307,9 +343,25 @@
       hideLobbyBox();
       if (window.NET) NET.disconnect();
       netPromise = null;
+      enteredGame = false;
+      netToast('');
     };
     const retry = el('lobby-retry');
-    if (retry) retry.onclick = () => { connectNet().catch(() => {}); };
+    if (retry) retry.onclick = () => {
+      /* 掉线后 socket 实例还在：直接重启它的重连循环，不新建连接、不重复绑事件 */
+      if (window.NET && NET.connectedOnce && NET.reconnect()) {
+        netToast('⏳ 正在重新连接…', false);
+        setLobbyBusy(true);
+        setTimeout(() => {
+          if (NET.on) return;
+          setLobbyFailed();
+          netToast('⏳ 仍未连上：请关闭代理 / VPN 后刷新页面重试', false);
+        }, 8000);
+        return;
+      }
+      netPromise = null;
+      connectNet().catch(() => {});
+    };
 
     // 老账号补设密保问题（纯 HTTP，不依赖 socket）
     const secBtn = el('lobby-sec');
@@ -366,13 +418,47 @@
       const box = el('lobby-overlay');
       if (!enteredGame && box && !box.classList.contains('hidden')) {
         enteredGame = true;
+        NET.onlineMode = true;        // 进入联机对局：断线时禁止回落到本地引擎
         hideLobbyBox();
         if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.enter();
       }
       if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.applyState(st);
     });
 
-    NET.onEvent('over', info => { if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.over(info); });
+    NET.onEvent('over', info => {
+      netToast('');
+      if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.over(info);
+    });
+
+    /* ---------------- 断线 / 重连：全程可见，绝不静默 ----------------
+       旧版掉线后没有任何提示，NET.on 还一直是 false，玩家点按钮毫无反应，
+       看起来就是「玩到一半卡住走不了」。 */
+    NET.onEvent('disconnect', () => {
+      netToast('⚠️ 网络中断，正在自动重连…（若开了代理 / VPN，建议关闭）', false);
+      const box = el('lobby-overlay');
+      if (box && !box.classList.contains('hidden')) setLobbyBusy(true);
+    });
+
+    NET.onEvent('reconnecting', () => {
+      netToast('⚠️ 网络不稳，正在重连，请稍等…', false);
+    });
+
+    NET.onEvent('reconnect', () => {
+      netToast('✅ 网络已恢复，正在同步对局…', true);
+      const box = el('lobby-overlay');
+      if (box && !box.classList.contains('hidden')) { setLobbyBusy(false); lobbyMsg(''); }
+    });
+
+    NET.onEvent('reconnect_failed', () => {
+      netToast('❌ 重连失败：请关闭代理 / VPN，然后点「重试连接」或刷新页面', false);
+      setLobbyFailed();
+      showLobbyBox();                 // 给出可点击的恢复入口，不弹阻塞 alert
+      lobbyMsg('⚠️ 连接已断开。可点「重试连接」；账号与对局在服务端，不会丢');
+    });
+
+    NET.onEvent('offline-action', () => {
+      netToast('⏳ 网络恢复中，操作暂未发送；请等连接恢复后再点', false);
+    });
   }
 
   /* 按钮需要 CS/SC 常量，等组件加载完再绑（DOM 早已显示，用户无感） */
@@ -454,7 +540,7 @@
           await connectNet();
         } catch (e) {
           setLobbyFailed();
-          lobbyMsg('⚠️ ' + ((e && e.message) || '连接失败') + '，可点「重试连接」');
+          lobbyMsg('⚠️ ' + ((e && e.message) || '连接失败') + '，可点「重试连接」。若开了代理 / VPN 请先关闭');
         }
       })();
     } finally {
