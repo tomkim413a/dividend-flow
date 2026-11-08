@@ -1,8 +1,17 @@
 /* ============================================================
- * online.js —— 联机入口（登录 / 注册 + 大厅 + 进入对局）
+ * online.js —— 联机入口（登录 / 注册 + 大厅 + 进入对局）· 稳定版
  *
- * 单机模式完全不参与：只有点了「联机对战」才会动态加载依赖，
- * 因此 exe / 本地网页版不受任何影响。
+ * 本版按线上实测回退到「简单可靠」的流程，刻意不再做任何预热/并行提速：
+ *   1. 点「联机对战」→ 纯 DOM 立刻弹登录框，零网络、零脚本等待；
+ *      （旧版先 await 唤醒服务 75s 并在按钮显示「正在连接服务器…」，
+ *        在 Edge 等浏览器会直接报加载超时、登录框根本弹不出来）
+ *   2. 联机组件在页面打开后于后台「顺序」加载，不阻塞任何界面；
+ *      （并行 + async=false 在个别浏览器会乱序或误报加载超时）
+ *   3. 登录成功 → 立刻显示大厅/房间功能，socket 握手在后台进行；
+ *      （旧版要等握手成功才 showLobby，冷启动时房间迟迟不弹）
+ *   4. 所有 fetch 仍带超时，socket 握手仍带超时，避免 Promise 永不结束。
+ *
+ * 单机模式完全不参与：只有点了「联机对战」才会动态加载依赖。
  * ============================================================ */
 (function () {
   'use strict';
@@ -10,21 +19,16 @@
   const LAST_USER = 'cf_online_lastuser';
 
   const el = id => document.getElementById(id);
-  /* token 存 sessionStorage（按标签页隔离）：
-     若用 localStorage，同源的多个标签页会共享同一份 token，
-     导致第二个窗口自动登录成同一个人，看起来像“能操控别的玩家”。
-     用户名另外存 localStorage 只用于「自动填回输入框」，不含任何凭据。 */
   const getToken = () => { try { return sessionStorage.getItem(KEY); } catch (e) { return null; } };
   const setToken = t => { try { t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY); } catch (e) {} };
   const getLastUser = () => { try { return localStorage.getItem(LAST_USER) || ''; } catch (e) { return ''; } };
   const setLastUser = n => { try { n ? localStorage.setItem(LAST_USER, n) : localStorage.removeItem(LAST_USER); } catch (e) {} };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  /* 所有请求都必须带超时：fetch 默认永不超时，免费实例冷启动时一个挂在半路的
-     /api/me 会让「点联机对战」后几十秒什么都不弹 —— 表现就是「按键点了没反应」。 */
+  /* 所有请求都带超时：fetch 默认永不超时，冷启动时挂住会表现为「点了没反应」 */
   function fetchT(url, opts, ms) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), ms || 60000);
+    const timer = setTimeout(() => ctrl.abort(), ms || 30000);
     return fetch(url, Object.assign({}, opts, { signal: ctrl.signal }))
       .finally(() => clearTimeout(timer));
   }
@@ -35,60 +39,97 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {}),
       cache: 'no-store'
-    }, 30000).then(r => r.json());
+    }, 25000).then(r => r.json());
     try {
       return await once();
     } catch (e) {
-      // 隔 2 秒再试一次：立即重试会和第一次一起卡在同一次冷启动窗口里，毫无意义
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 1500));
       try {
         return await once();
       } catch (e2) {
-        return { err: '连接超时，服务器可能仍在启动中，请稍后再试（已自动重试一次）' };
+        return { err: '连接不上服务器，请稍后再试（已自动重试一次）' };
       }
     }
   }
 
-  /* 三个脚本并行下载、按插入顺序执行。
-     动态脚本设 async=false 后，浏览器会并行取回但保证按插入顺序执行，
-     这样 net.js 依赖的 protocol.js / socket.io 一定先就绪。
-     旧版是「等一个下完再下下一个」，跨境每次 1.2–2.4s，光加载就要 4–7 秒。 */
-  function loadScripts(srcs) {
-    return new Promise((resolve, reject) => {
-      let left = srcs.length;
-      const timer = setTimeout(() => reject(new Error('联机组件加载超时，请检查网络')), 30000);
-      const done = () => { clearTimeout(timer); resolve(); };
-      srcs.forEach(src => {
-        if (document.querySelector('script[src="' + src + '"]')) { if (--left === 0) done(); return; }
-        const s = document.createElement('script');
-        s.src = src;
-        s.async = false;
-        s.onload = () => { if (--left === 0) done(); };
-        s.onerror = () => { clearTimeout(timer); reject(new Error(src + ' 加载失败')); };
-        document.head.appendChild(s);
-      });
+  /* ---------------- 联机组件：后台顺序加载 ----------------
+     顺序加载最稳：protocol.js → socket.io → net.js，后者依赖前者的 CS/SC/io。
+     全程后台、失败可重试，不再阻塞登录框，也不再弹「加载超时」alert。 */
+  const SCRIPTS = ['/protocol.js', '/socket.io/socket.io.js', 'js/net.js'];
+  let scriptsPromise = null;
+  function loadScripts() {
+    if (scriptsPromise) return scriptsPromise;
+    scriptsPromise = SCRIPTS.reduce((prev, src) => prev.then(() => new Promise((res, rej) => {
+      if (document.querySelector('script[src="' + src + '"]')) return res();
+      const s = document.createElement('script');
+      const timer = setTimeout(() => rej(new Error(src + ' 加载超时')), 25000);
+      s.src = src;
+      s.onload = () => { clearTimeout(timer); res(); };
+      s.onerror = () => { clearTimeout(timer); rej(new Error(src + ' 加载失败')); };
+      document.head.appendChild(s);
+    })), Promise.resolve()).catch(e => { scriptsPromise = null; throw e; });
+    return scriptsPromise;
+  }
+
+  /* ---------------- 大厅状态 ---------------- */
+  let currentUser = null;
+  let netPromise = null;
+  let netEventsBound = false;      // 事件只注册一次，避免重复进出大厅累积监听
+  let enteredGame = false;
+
+  function lobbyMsg(text, ok) {
+    const m = el('lobby-msg');
+    if (!m) return;
+    m.textContent = text || '';
+    m.classList.toggle('ok', !!ok);
+  }
+  function showLobbyBox() { const b = el('lobby-overlay'); if (b) b.classList.remove('hidden'); }
+  function hideLobbyBox() { const b = el('lobby-overlay'); if (b) b.classList.add('hidden'); }
+  function setLobbyBusy(busy) {
+    ['lobby-create', 'lobby-join', 'lobby-start'].forEach(id => {
+      const b = el(id);
+      if (b) b.disabled = !!busy || (id === 'lobby-start');
     });
+    const p = el('lobby-prof'); if (p) p.disabled = !!busy;
+    // 重试按钮只在连接失败时由 setLobbyFailed 显式显示；连接中/已连上都隐藏
+    const r = el('lobby-retry'); if (r) r.classList.add('hidden');
+  }
+  /* 连接失败：按钮尚未绑定事件，必须禁用，避免点了没反应；只开放重试 */
+  function setLobbyFailed() {
+    ['lobby-create', 'lobby-join', 'lobby-start'].forEach(id => {
+      const b = el(id); if (b) b.disabled = true;
+    });
+    const p = el('lobby-prof'); if (p) p.disabled = true;
+    const r = el('lobby-retry'); if (r) r.classList.remove('hidden');
   }
 
-  /* 页面一打开就在后台并行完成「唤醒服务 + 加载联机组件」。
-     点「联机对战」时通常早已就绪，用户只需等一次登录 POST + 一次 socket 握手。 */
-  let readyPromise = null;
-  function ensureReady() {
-    if (readyPromise) return readyPromise;
-    const health = fetchT('/api/health?wake=' + Date.now(), { cache: 'no-store' }, 75000)
-      .then(r => r.ok).catch(() => false);
-    const scripts = loadScripts(['/protocol.js', '/socket.io/socket.io.js', 'js/net.js']);
-    readyPromise = Promise.all([health, scripts]).then(([alive]) => {
-      if (!alive) throw new Error('服务器正在启动（免费实例首次唤醒约 30–60 秒），请稍后重试');
-      return true;
-    }).catch(e => { readyPromise = null; throw e; });   // 失败可重试，不缓存错误
-    return readyPromise;
+  /* 连接 socket（后台）。成功后才绑定大厅按钮与事件，避免脚本未就绪时报错 */
+  function connectNet() {
+    if (netPromise) return netPromise;
+    lobbyMsg('⏳ 正在连接房间服务…');
+    setLobbyBusy(true);
+    netPromise = loadScripts()
+      .then(() => {
+        if (!window.NET) throw new Error('联机组件未就绪，请刷新页面');
+        return NET.connect(getToken(), currentUser);
+      })
+      .then(() => {
+        bindNetEvents();
+        bindLobbyButtons();
+        setLobbyBusy(false);
+        lobbyMsg('');
+        return NET;
+      })
+      .catch(e => {
+        netPromise = null;                       // 允许「重试连接」再试一次
+        setLobbyFailed();
+        lobbyMsg('⚠️ ' + ((e && e.message) || '连接失败') + '，可点「重试连接」');
+        throw e;
+      });
+    return netPromise;
   }
 
-  /* ---------------- 登录 / 注册 / 找回密码 ----------------
-     找回密码两条通道：
-       · 密保问题（默认，不依赖邮件，永远可用）
-       · 邮箱重置邮件（需要可靠的发信通道，可能进垃圾箱）   */
+  /* ---------------- 登录 / 注册 / 找回密码 ---------------- */
   function showAuth(onOk) {
     const box = el('auth-overlay');
     if (!box) return;
@@ -101,9 +142,7 @@
     const submit = el('auth-submit'), switcher = el('auth-switch'), forgotBtn = el('auth-forgot');
     let mode = 'login';
 
-    /* 邮件找回默认对玩家隐藏：只有服务端确认发信通道真的可用（MAIL_ENABLED=true）才显示入口。
-       否则会出现「提示已发送但邮件被 QQ/163 拒收」的假成功——那正是本项目最初的故障。
-       拿不到 health 时保持隐藏，密保问题找回始终可用。 */
+    /* 邮件找回默认隐藏：只有服务端确认发信通道可用才显示入口 */
     let mailEnabled = false;
     fetchT('/api/health', { cache: 'no-store' }, 8000)
       .then(r => r.json()).then(h => {
@@ -118,7 +157,6 @@
     };
     const show = (node, on) => { if (node) node.classList.toggle('hidden', !on); };
 
-    /* 取密保问题（只在"密保找回"模式用） */
     async function loadQuestion() {
       const name = u.value.trim();
       if (!name) { secQText.textContent = '请先填写用户名'; return; }
@@ -140,9 +178,8 @@
       show(u, true);
       u.placeholder = isForgot ? '用户名（必填）' : '用户名（最长 16 字）';
       show(em, isReg || isMail);
-      show(p, !isMail);                       // 登录/注册 = 密码；密保找回 = 新密码
+      show(p, !isMail);
       p.placeholder = isSec ? '新密码（至少 4 位）' : '密码（至少 4 位）';
-      // 让浏览器正确区分「记住现有密码」和「保存新密码」
       p.autocomplete = (isReg || isSec) ? 'new-password' : 'current-password';
       show(p2, isReg || isSec);
       p2.placeholder = isSec ? '确认新密码' : '确认密码';
@@ -167,7 +204,7 @@
       p.value = ''; p2.value = ''; secAns.value = '';
       if (isReg) { em.value = ''; secQ.value = ''; secA.value = ''; }
       if (prefill) u.value = prefill;
-      else if (isLogin && !u.value.trim()) u.value = getLastUser();  // 记住上次登录的名字
+      else if (isLogin && !u.value.trim()) u.value = getLastUser();
       if (isSec) {
         secQText.textContent = '填写用户名后会自动显示你的密保问题';
         if (u.value.trim()) loadQuestion();
@@ -175,7 +212,7 @@
     }
 
     submit.onclick = async () => {
-      if (submit.disabled) return;                 // 防连点：一次只发一个请求
+      if (submit.disabled) return;
       if (mode === 'login') {
         submit.disabled = true;
         say('⏳ 正在登录…', true);
@@ -185,7 +222,8 @@
         setToken(r.token);
         setLastUser(u.value.trim());
         say('✅ 登录成功，正在进入…', true);
-        setTimeout(() => { box.classList.add('hidden'); onOk(r.user); }, 700);
+        box.classList.add('hidden');
+        onOk(r.user);                          // 立刻显示大厅，不等 socket
         return;
       }
 
@@ -203,7 +241,6 @@
         });
         submit.disabled = false;
         if (r.err) return say('❌ ' + r.err);
-        // 注册成功 → 回到登录界面（不自动登录）
         setMode('login', u.value.trim());
         say('✅ 注册成功，请用刚才的账号登录', true);
         return;
@@ -239,7 +276,6 @@
     forgotBtn.onclick = () => setMode(mode === 'forgot' ? 'forgotmail' : 'forgot', u.value.trim());
     el('auth-close').onclick = () => box.classList.add('hidden');
 
-    // 改用户名后重新取密保问题，避免对着别人的问题答答案
     u.addEventListener('blur', () => { if (mode === 'forgot') loadQuestion(); });
     u.addEventListener('input', () => {
       if (mode === 'forgot') secQText.textContent = '填写用户名后会自动显示你的密保问题';
@@ -248,67 +284,42 @@
     setMode('login');
   }
 
-  /* ---------------- 大厅 ---------------- */
+  /* ---------------- 大厅（先显示 DOM，连上后再绑事件） ---------------- */
   function showLobby(user) {
-    const box = el('lobby-overlay');
-    if (!box) return;
-    box.classList.remove('hidden');
-    const seats = el('lobby-seats'), roomNo = el('lobby-roomno'), msg = el('lobby-msg');
-    let entered = false;
+    currentUser = user || currentUser;
+    enteredGame = false;
+    showLobbyBox();
+    const roomNo = el('lobby-roomno'), seats = el('lobby-seats');
+    if (roomNo) roomNo.textContent = '—';
+    if (seats) seats.innerHTML = '';
+    lobbyMsg('⏳ 正在连接房间服务…');
+    setLobbyBusy(true);
 
-    // 职业下拉：随机 + 全部职业（选项来自 data.js）
+    // 职业下拉：随机 + 全部职业（只依赖 data.js，不依赖联机脚本）
     const profSel = el('lobby-prof');
     if (profSel && window.CF && CF.PROFESSIONS) {
       profSel.innerHTML = '<option value="">🎲 随机职业</option>' +
         CF.PROFESSIONS.map(p => `<option value="${p.id}">${p.icon} ${p.name}</option>`).join('');
       try { const s = sessionStorage.getItem('cf_online_prof'); if (s) profSel.value = s; } catch (e) {}
-      profSel.onchange = () => {
-        try { sessionStorage.setItem('cf_online_prof', profSel.value); } catch (e) {}
-        NET.send(CS.SET_PROF, { prof: profSel.value });   // 已在房间内则同步给服务端
-      };
     }
 
-    NET.onEvent('room', r => {
-      if (!r) return;
-      roomNo.textContent = r.id;
-      seats.innerHTML = (r.seats || []).map(s => {
-        const pr = (window.CF && CF.PROFESSIONS || []).find(x => x.id === s.prof);
-        return `<li>${esc(s.name)}${s.ai ? ' <small>（电脑）</small>' : ''}` +
-          `${pr ? ` <small>${pr.icon} ${pr.name}</small>` : ''}</li>`;
-      }).join('');
-      el('lobby-start').disabled = !(r.hostId === user.id);
-      msg.textContent = '';
-    });
-
-    NET.onEvent('error', m => { msg.textContent = '⚠️ ' + (m || '操作失败'); });
-
-    // 首次收到对局状态 → 进入对局画面
-    NET.onEvent('state', st => {
-      if (entered) return;
-      entered = true;
-      box.classList.add('hidden');
-      if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.enter();
-    });
-
-    const profVal = () => (el('lobby-prof') ? el('lobby-prof').value : '');
-    el('lobby-create').onclick = () => NET.send(CS.CREATE_ROOM, { prof: profVal() });
-    el('lobby-join').onclick = () => {
-      const id = String((el('lobby-roomid').value || '')).trim().toUpperCase();
-      if (!id) { msg.textContent = '请输入房间号'; return; }
-      NET.send(CS.JOIN_ROOM, { roomId: id, prof: profVal() });
+    el('lobby-close').onclick = () => {
+      hideLobbyBox();
+      if (window.NET) NET.disconnect();
+      netPromise = null;
     };
-    el('lobby-start').onclick = () => NET.send(CS.START_GAME);
-    el('lobby-close').onclick = () => { box.classList.add('hidden'); NET.disconnect(); };
+    const retry = el('lobby-retry');
+    if (retry) retry.onclick = () => { connectNet().catch(() => {}); };
 
-    // 老账号补设密保问题（邮箱功能上线前注册的账号没有，忘记密码就只能找管理员）
+    // 老账号补设密保问题（纯 HTTP，不依赖 socket）
     const secBtn = el('lobby-sec');
     if (secBtn) secBtn.onclick = async () => {
       const q = window.prompt('设置密保问题（忘记密码时用它自助重置）\n例：我的第一只宠物叫什么');
       if (q === null) return;
-      if (q.trim().length < 2) { msg.textContent = '⚠️ 密保问题至少 2 个字'; return; }
+      if (q.trim().length < 2) { lobbyMsg('⚠️ 密保问题至少 2 个字'); return; }
       const a = window.prompt('密保答案（一定要记住，不区分大小写）');
       if (a === null) return;
-      if (a.trim().length < 2) { msg.textContent = '⚠️ 密保答案至少 2 个字'; return; }
+      if (a.trim().length < 2) { lobbyMsg('⚠️ 密保答案至少 2 个字'); return; }
       try {
         const r = await fetch('/api/account/security', {
           method: 'POST',
@@ -316,39 +327,91 @@
           body: JSON.stringify({ secQ: q.trim(), secA: a.trim() })
         });
         const j = await r.json().catch(() => ({}));
-        msg.textContent = j.err ? '⚠️ ' + j.err : '✅ 密保问题已保存，忘记密码时可用它重置';
+        lobbyMsg(j.err ? '⚠️ ' + j.err : '✅ 密保问题已保存，忘记密码时可用它重置', !j.err);
       } catch (e) {
-        msg.textContent = '⚠️ 网络错误，请稍后重试';
+        lobbyMsg('⚠️ 网络错误，请稍后重试');
       }
     };
   }
 
-  /* ---------------- 进入对局后的持续同步 ---------------- */
-  function bindGameSync() {
-    if (!window.ONLINE_HOOKS) return;
-    NET.onEvent('state', st => window.ONLINE_HOOKS.applyState(st));
-    NET.onEvent('over', info => window.ONLINE_HOOKS.over(info));
-    // 进入对局后也要能看到服务端拒绝原因（例如“还没轮到你行动”），否则点了没反应却不知为何
+  /* socket 连上后：注册房间/错误/状态事件，并启用全部按钮 */
+  /* socket 事件只注册一次。断线重连后 NET 对象仍在，无需重复绑定。 */
+  function bindNetEvents() {
+    if (netEventsBound) return;
+    if (!window.NET) return;
+    netEventsBound = true;
+
+    NET.onEvent('room', r => {
+      if (!r) return;
+      const roomNo = el('lobby-roomno'), seats = el('lobby-seats');
+      if (roomNo) roomNo.textContent = r.id;
+      if (seats) seats.innerHTML = (r.seats || []).map(s => {
+        const pr = (window.CF && CF.PROFESSIONS || []).find(x => x.id === s.prof);
+        return `<li>${esc(s.name)}${s.ai ? ' <small>（电脑）</small>' : ''}` +
+          `${pr ? ` <small>${pr.icon} ${pr.name}</small>` : ''}</li>`;
+      }).join('');
+      const start = el('lobby-start');
+      if (start) start.disabled = !(currentUser && r.hostId === currentUser.id);
+      lobbyMsg('');
+    });
+
     NET.onEvent('error', m => {
-      try { window.alert('联机提示：' + (m || '操作失败')); } catch (e) {}
+      const box = el('lobby-overlay');
+      if (box && !box.classList.contains('hidden')) lobbyMsg('⚠️ ' + (m || '操作失败'));
+      else { try { window.alert('联机提示：' + (m || '操作失败')); } catch (e) {} }
     });
-    NET.onEvent('disconnect', () => {
-      try { window.alert('与服务器断开连接，请检查网络后重连。'); } catch (e) {}
+
+    NET.onEvent('state', st => {
+      // 首次收到对局状态 → 收起大厅、进入对局画面
+      const box = el('lobby-overlay');
+      if (!enteredGame && box && !box.classList.contains('hidden')) {
+        enteredGame = true;
+        hideLobbyBox();
+        if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.enter();
+      }
+      if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.applyState(st);
     });
+
+    NET.onEvent('over', info => { if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.over(info); });
+  }
+
+  /* 按钮需要 CS/SC 常量，等组件加载完再绑（DOM 早已显示，用户无感） */
+  function bindLobbyButtons() {
+    const profVal = () => (el('lobby-prof') ? el('lobby-prof').value : '');
+    const profSel = el('lobby-prof');
+    if (profSel) profSel.onchange = () => {
+      try { sessionStorage.setItem('cf_online_prof', profSel.value); } catch (e) {}
+      NET.send(CS.SET_PROF, { prof: profSel.value });
+    };
+    el('lobby-create').onclick = () => NET.send(CS.CREATE_ROOM, { prof: profVal() });
+    el('lobby-join').onclick = () => {
+      const id = String((el('lobby-roomid').value || '')).trim().toUpperCase();
+      if (!id) { lobbyMsg('请输入房间号'); return; }
+      NET.send(CS.JOIN_ROOM, { roomId: id, prof: profVal() });
+    };
+    el('lobby-start').onclick = () => NET.send(CS.START_GAME);
+  }
+
+  /* ---------------- 登录成功：立刻显示大厅，后台连接 ---------------- */
+  function onLoggedIn(user) {
+    showLobby(user);                          // ★ 房间功能零等待弹出
+    connectNet().catch(() => {});             // 握手放后台，不挡界面
   }
 
   /* ---------------- 入口 ---------------- */
   window.addEventListener('DOMContentLoaded', () => {
     const b = document.getElementById('btn-online');
     if (!b) return;
-    // 桌面 exe（file://）没有联机服务端 → 隐藏该入口，避免误点
     if (location.protocol === 'file:') { b.style.display = 'none'; return; }
 
-    /* 页面一打开就并行预热：唤醒服务 + 把三个联机组件加载好（都不等）。
-       用户看到界面、点「联机对战」、填完账号的这几秒里，实例和脚本早就是热的。 */
-    setTimeout(() => { try { ensureReady().catch(() => {}); } catch (e) {} }, 400);
+    /* 页面打开后后台做两件轻事：顺序加载联机组件 + 唤醒服务。
+       都不等待、都不改按钮文字、都不弹任何提示，因此不会造成加载超时。 */
+    setTimeout(() => {
+      try { loadScripts().catch(() => {}); } catch (e) {}
+      try { fetchT('/api/health?boot=' + Date.now(), { cache: 'no-store' }, 8000).catch(() => {}); } catch (e) {}
+    }, 300);
 
-    /* 页面开着期间每 10 分钟 ping 一次，避免 15 分钟无请求被 Render 休眠。 */
+    /* 页面开着期间每 10 分钟 ping 一次，避免 15 分钟无请求被 Render 休眠 */
     const ping = () => {
       if (document.visibilityState === 'visible') {
         try { fetchT('/api/health?ka=' + Date.now(), { cache: 'no-store' }, 8000).catch(() => {}); } catch (e) {}
@@ -362,58 +425,40 @@
 
   let starting = false;
 
-  /* 登录成功后才真正需要网络。预热通常在用户填账号时就已完成，这里几乎 0 等待。 */
-  function onLoggedIn(user) {
-    const b = document.getElementById('btn-online');
-    const label = b ? b.textContent : '';
-    if (b) b.textContent = '⏳ 正在进入大厅…';
-    return (async () => {
-      try {
-        await ensureReady();
-        await NET.connect(getToken(), user);
-        bindGameSync();
-        showLobby(user);
-      } catch (e) {
-        try { window.alert('账号已登录，但联机连接失败：' + (e && e.message) + '\n请稍后再点「联机对战」重试。'); } catch (_) {}
-      } finally {
-        if (b) b.textContent = label;
-      }
-    })();
-  }
-
-  window.startOnline = async function () {
-    if (starting) return;                          // 防连点
+  window.startOnline = function () {
+    if (starting) return;
     starting = true;
-    const b = document.getElementById('btn-online');
-    const label = b ? b.textContent : '';
-    const btnState = (text, disabled) => { if (b) { b.textContent = text; b.disabled = !!disabled; } };
-
     try {
-      ensureReady().catch(() => {});               // 兜底：预热若还没启动，这里补上（不等它）
+      loadScripts().catch(() => {});           // 后台补加载，绝不等它
 
       const t = getToken();
       if (!t) {
-        // 登录框是纯 DOM，立刻弹出 —— 用户不再盯着「正在连接服务器」干等
-        showAuth(onLoggedIn);
+        showAuth(onLoggedIn);                  // ★ 纯 DOM，零等待弹登录框
         return;
       }
 
-      // 有 token：恢复登录需要一次校验，但预热和 /api/me 并行发出
-      btnState('⏳ 正在恢复登录…', true);
-      const [, me] = await Promise.all([
-        ensureReady(),
-        fetchT('/api/me', { headers: { Authorization: 'Bearer ' + t }, cache: 'no-store' }, 15000)
-          .then(r => r.ok ? r.json() : null).catch(() => null)
-      ]);
-      if (!me) { setToken(null); showAuth(onLoggedIn); return; }   // token 过期 → 直接弹登录框
-      await NET.connect(t, me.user);
-      bindGameSync();
-      showLobby(me.user);
-    } catch (e) {
-      try { window.alert('联机连接失败：' + (e && e.message) + '\n请稍后重试。'); } catch (_) {}
+      /* 已有 token：乐观先把大厅显示出来，后台校验 token 并连接。
+         只有服务端明确返回 401 才清 token 退回登录框；超时/网络错误保留登录态。 */
+      showLobby({ id: null, username: getLastUser() || '…' });
+      lobbyMsg('⏳ 正在恢复登录…');
+      (async () => {
+        try {
+          const r = await fetchT('/api/me', {
+            headers: { Authorization: 'Bearer ' + t }, cache: 'no-store'
+          }, 12000);
+          if (r.status === 401) { setToken(null); hideLobbyBox(); showAuth(onLoggedIn); return; }
+          if (!r.ok) throw new Error('服务器暂时无响应');
+          const me = await r.json();
+          if (!me || !me.user) { setToken(null); hideLobbyBox(); showAuth(onLoggedIn); return; }
+          currentUser = me.user;
+          await connectNet();
+        } catch (e) {
+          setLobbyFailed();
+          lobbyMsg('⚠️ ' + ((e && e.message) || '连接失败') + '，可点「重试连接」');
+        }
+      })();
     } finally {
       starting = false;
-      btnState(label, false);
     }
   };
 })();

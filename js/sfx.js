@@ -27,9 +27,10 @@ const SFX = (function () {
     } catch (e) { return null; }
   }
 
-  /* 音乐关掉时，音效也一并静音 */
+  /* 音乐关掉时，音效也一并静音。
+     注意：BGM 模块万一加载失败，不能连带把全部点击音效也弄哑（此前线上就出现过「音效整个都没有」）。 */
   function enabled() {
-    return !!(window.BGM && window.BGM.on);
+    return !window.BGM || window.BGM.on !== false;
   }
 
   /* 单音：频率 / 时长 / 波形 / 音量 / 延迟 */
