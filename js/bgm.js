@@ -1,9 +1,10 @@
 /* ============================================================
  * bgm.js —— 背景音乐模块（股息流）
  *
- * 曲目：
- *   开始界面  → BGM/Menu of Small Numbers.mp3
- *   对局进行中 → BGM/Quiet Tape Loop.mp3
+ * 曲目（128kbps 版，原 320kbps 母带仍保留在 BGM/ 目录）：
+ *   开始界面  → BGM/bgm-setup.mp3
+ *   对局进行中 → BGM/bgm-game.mp3
+ *   结算画面  → BGM/bgm-end.mp3
  *
  * 职责（不参与任何游戏逻辑）：
  *   1. 按场景切换并循环播放 BGM；
@@ -16,10 +17,12 @@
 'use strict';
 
 const BGM = (function () {
+  // 320kbps 原曲各 5.6–7.1MB，跨境边下边播容易断续；改用 128kbps（2.2–2.9MB，小 60%）。
+  // 想换回母带：把下面三行改回 Menu of Small Numbers / Quiet Tape Loop / Coin Sparkle Fanfare.mp3。
   const SRC = {
-    setup: 'BGM/Menu of Small Numbers.mp3',
-    game: 'BGM/Quiet Tape Loop.mp3',
-    end: 'BGM/Coin Sparkle Fanfare.mp3'      // 结算画面（胜利 / 失败都用它）
+    setup: 'BGM/bgm-setup.mp3',
+    game: 'BGM/bgm-game.mp3',
+    end: 'BGM/bgm-end.mp3'                   // 结算画面（胜利 / 失败都用它）
   };
   const DUCK = 0.35;                        // 语音讲解时 BGM 压低到的比例
   const KEY_ON = 'cf_bgm_on_v2';   // v2：作废旧版可能误存的“关闭”状态，保证默认一定开启
