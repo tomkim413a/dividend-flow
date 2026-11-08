@@ -29,15 +29,6 @@
       .finally(() => clearTimeout(timer));
   }
 
-  /* 唤醒：免费实例 15 分钟无请求会休眠，首次请求需 30–60 秒。
-     先单独把服务叫醒并等它返回，之后的接口都是毫秒级，不用每个请求都硬扛长超时。 */
-  async function wakeUp() {
-    try {
-      const r = await fetchT('/api/health?wake=' + Date.now(), { cache: 'no-store' }, 75000);
-      return r.ok;
-    } catch (e) { return false; }
-  }
-
   async function post(p, body) {
     const once = () => fetchT(p, {
       method: 'POST',
@@ -58,16 +49,40 @@
     }
   }
 
+  /* 三个脚本并行下载、按插入顺序执行。
+     动态脚本设 async=false 后，浏览器会并行取回但保证按插入顺序执行，
+     这样 net.js 依赖的 protocol.js / socket.io 一定先就绪。
+     旧版是「等一个下完再下下一个」，跨境每次 1.2–2.4s，光加载就要 4–7 秒。 */
   function loadScripts(srcs) {
-    return srcs.reduce((prev, src) => prev.then(() => new Promise((res, rej) => {
-      if (document.querySelector('script[src="' + src + '"]')) return res();
-      const s = document.createElement('script');
-      const timer = setTimeout(() => rej(new Error(src + ' 加载超时')), 25000);
-      s.src = src;
-      s.onload = () => { clearTimeout(timer); res(); };
-      s.onerror = () => { clearTimeout(timer); rej(new Error(src + ' 加载失败')); };
-      document.head.appendChild(s);
-    })), Promise.resolve());
+    return new Promise((resolve, reject) => {
+      let left = srcs.length;
+      const timer = setTimeout(() => reject(new Error('联机组件加载超时，请检查网络')), 30000);
+      const done = () => { clearTimeout(timer); resolve(); };
+      srcs.forEach(src => {
+        if (document.querySelector('script[src="' + src + '"]')) { if (--left === 0) done(); return; }
+        const s = document.createElement('script');
+        s.src = src;
+        s.async = false;
+        s.onload = () => { if (--left === 0) done(); };
+        s.onerror = () => { clearTimeout(timer); reject(new Error(src + ' 加载失败')); };
+        document.head.appendChild(s);
+      });
+    });
+  }
+
+  /* 页面一打开就在后台并行完成「唤醒服务 + 加载联机组件」。
+     点「联机对战」时通常早已就绪，用户只需等一次登录 POST + 一次 socket 握手。 */
+  let readyPromise = null;
+  function ensureReady() {
+    if (readyPromise) return readyPromise;
+    const health = fetchT('/api/health?wake=' + Date.now(), { cache: 'no-store' }, 75000)
+      .then(r => r.ok).catch(() => false);
+    const scripts = loadScripts(['/protocol.js', '/socket.io/socket.io.js', 'js/net.js']);
+    readyPromise = Promise.all([health, scripts]).then(([alive]) => {
+      if (!alive) throw new Error('服务器正在启动（免费实例首次唤醒约 30–60 秒），请稍后重试');
+      return true;
+    }).catch(e => { readyPromise = null; throw e; });   // 失败可重试，不缓存错误
+    return readyPromise;
   }
 
   /* ---------------- 登录 / 注册 / 找回密码 ----------------
@@ -90,11 +105,12 @@
        否则会出现「提示已发送但邮件被 QQ/163 拒收」的假成功——那正是本项目最初的故障。
        拿不到 health 时保持隐藏，密保问题找回始终可用。 */
     let mailEnabled = false;
-    fetch('/api/health').then(r => r.json()).then(h => {
-      if (!h || !h.mailEnabled) return;
-      mailEnabled = true;
-      if (mode === 'forgot') show(forgotBtn, true);
-    }).catch(() => {});
+    fetchT('/api/health', { cache: 'no-store' }, 8000)
+      .then(r => r.json()).then(h => {
+        if (!h || !h.mailEnabled) return;
+        mailEnabled = true;
+        if (mode === 'forgot') show(forgotBtn, true);
+      }).catch(() => {});
 
     const say = (text, ok) => {
       msg.textContent = text || '';
@@ -328,9 +344,11 @@
     // 桌面 exe（file://）没有联机服务端 → 隐藏该入口，避免误点
     if (location.protocol === 'file:') { b.style.display = 'none'; return; }
 
-    /* 页面一打开就在后台把服务叫醒（不等它），这样用户填完账号时实例已经热了。
-       页面开着期间每 10 分钟 ping 一次，避免 15 分钟无请求被 Render 休眠。 */
-    try { fetchT('/api/health?boot=' + Date.now(), { cache: 'no-store' }, 8000).catch(() => {}); } catch (e) {}
+    /* 页面一打开就并行预热：唤醒服务 + 把三个联机组件加载好（都不等）。
+       用户看到界面、点「联机对战」、填完账号的这几秒里，实例和脚本早就是热的。 */
+    setTimeout(() => { try { ensureReady().catch(() => {}); } catch (e) {} }, 400);
+
+    /* 页面开着期间每 10 分钟 ping 一次，避免 15 分钟无请求被 Render 休眠。 */
     const ping = () => {
       if (document.visibilityState === 'visible') {
         try { fetchT('/api/health?ka=' + Date.now(), { cache: 'no-store' }, 8000).catch(() => {}); } catch (e) {}
@@ -343,57 +361,58 @@
   });
 
   let starting = false;
+
+  /* 登录成功后才真正需要网络。预热通常在用户填账号时就已完成，这里几乎 0 等待。 */
+  function onLoggedIn(user) {
+    const b = document.getElementById('btn-online');
+    const label = b ? b.textContent : '';
+    if (b) b.textContent = '⏳ 正在进入大厅…';
+    return (async () => {
+      try {
+        await ensureReady();
+        await NET.connect(getToken(), user);
+        bindGameSync();
+        showLobby(user);
+      } catch (e) {
+        try { window.alert('账号已登录，但联机连接失败：' + (e && e.message) + '\n请稍后再点「联机对战」重试。'); } catch (_) {}
+      } finally {
+        if (b) b.textContent = label;
+      }
+    })();
+  }
+
   window.startOnline = async function () {
-    if (starting) return;                          // 防连点：只跑一套唤醒/加载流程
+    if (starting) return;                          // 防连点
     starting = true;
-    window.__DF_NET_BUSY = true;                   // 让 BGM 预取避让关键请求
     const b = document.getElementById('btn-online');
     const label = b ? b.textContent : '';
     const btnState = (text, disabled) => { if (b) { b.textContent = text; b.disabled = !!disabled; } };
 
     try {
-      btnState('⏳ 正在连接服务器…', true);
-      const alive = await wakeUp();
-      if (!alive) {
-        btnState('⚠️ 连接超时', false);
-        try { window.alert('服务器正在启动（免费实例闲置后首次唤醒约需 30–60 秒）。\n请稍等片刻，再点一次「联机对战」。'); } catch (_) {}
+      ensureReady().catch(() => {});               // 兜底：预热若还没启动，这里补上（不等它）
+
+      const t = getToken();
+      if (!t) {
+        // 登录框是纯 DOM，立刻弹出 —— 用户不再盯着「正在连接服务器」干等
+        showAuth(onLoggedIn);
         return;
       }
 
-      btnState('⏳ 正在加载联机组件…', true);
-      await loadScripts(['/protocol.js', '/socket.io/socket.io.js', 'js/net.js']);
-
-      let t = getToken(), me = null;
-      if (t) {
-        try {
-          // 必须带超时：旧代码这里是无超时 fetch，冷启动时会一直挂着，登录框永远不弹
-          const r = await fetchT('/api/me', {
-            headers: { Authorization: 'Bearer ' + t }, cache: 'no-store'
-          }, 15000);
-          if (r.ok) me = await r.json();
-        } catch (e) { me = null; }
-      }
-      if (!me) {
-        showAuth(async user => {
-          try {
-            await NET.connect(getToken(), user);
-          } catch (e) {
-            try { window.alert('账号已登录，但联机连接失败：' + (e && e.message) + '\n请稍后再点「联机对战」重试。'); } catch (_) {}
-            return;
-          }
-          bindGameSync();
-          showLobby(user);
-        });
-      } else {
-        await NET.connect(t, me.user);
-        bindGameSync();
-        showLobby(me.user);
-      }
+      // 有 token：恢复登录需要一次校验，但预热和 /api/me 并行发出
+      btnState('⏳ 正在恢复登录…', true);
+      const [, me] = await Promise.all([
+        ensureReady(),
+        fetchT('/api/me', { headers: { Authorization: 'Bearer ' + t }, cache: 'no-store' }, 15000)
+          .then(r => r.ok ? r.json() : null).catch(() => null)
+      ]);
+      if (!me) { setToken(null); showAuth(onLoggedIn); return; }   // token 过期 → 直接弹登录框
+      await NET.connect(t, me.user);
+      bindGameSync();
+      showLobby(me.user);
     } catch (e) {
-      try { window.alert('联机连接失败：' + (e && e.message) + '\n请检查网络后重试。'); } catch (_) {}
+      try { window.alert('联机连接失败：' + (e && e.message) + '\n请稍后重试。'); } catch (_) {}
     } finally {
       starting = false;
-      window.__DF_NET_BUSY = false;
       btnState(label, false);
     }
   };

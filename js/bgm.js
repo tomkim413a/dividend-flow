@@ -46,7 +46,9 @@ const BGM = (function () {
   let scene = 'setup';                      // 当前应播放的场景
   let ducked = false;
   let gestureArmed = false;
-  let prefetchStarted = false;
+  let prefetchArmed = false;                // 起播约 1 秒后才允许后台完整下载
+  let wantPlaying = true;                   // 「意图在播」：不受 load()/换源把 paused 重置影响
+  let mutedFallback = false;                // 自动播放被浏览器拦截 → 先静音播着，首次点击恢复音量
 
   /* ------------------------------------------------------------
    * 完整预取：把整首曲子下成本地 Blob 再交给 <audio>。
@@ -58,9 +60,10 @@ const BGM = (function () {
    * 避免重演「一进页面并发拉 19MB 拖慢登录」的老问题。
    * ------------------------------------------------------------ */
   function prefetch(key) {
-    if (!prefetchStarted || !key || !SRC[key] || blobUrls[key] || prefetching[key] || !on) return;
+    if (!prefetchArmed || !key || !SRC[key] || blobUrls[key] || prefetching[key] || !on) return;
     prefetching[key] = true;
-    fetch(SRC[key], { cache: 'force-cache' })
+    // priority:'low'：让 audio 首播、页面脚本、登录请求排在前面
+    fetch(SRC[key], { cache: 'force-cache', priority: 'low' })
       .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
       .then(b => {
         blobUrls[key] = URL.createObjectURL(b);
@@ -70,22 +73,26 @@ const BGM = (function () {
       .finally(() => { prefetching[key] = false; });
   }
 
-  /* 已经用网络源播着时换成本地源：保留播放进度与播放状态 */
+  /* 已经用网络源播着时换成本地源：保留播放进度与播放状态。
+     旧版用 !a.paused 判断是否补播，但 a.load() 会把它重置成 true；
+     且预取完成常与「首次点击补播」撞在一起，导致音乐被换源打断后就此静默。
+     改用 wantPlaying（播放意图），并在 loadedmetadata 后无条件主动恢复。 */
   function swapToBlob(key, url) {
     const a = els[key];
     if (!a || a.src === url) return;
     const t = a.currentTime || 0;
-    const keepPlaying = scene === key && on && !a.paused;
+    const shouldPlay = wantPlaying && on && scene === key;
     a.src = url;
     try { a.load(); } catch (e) {}
     a.addEventListener('loadedmetadata', () => {
+      try { a.currentTime = Math.min(t, isFinite(a.duration) ? a.duration : t); } catch (e) {}
+      if (!shouldPlay) return;
       try {
-        const d = isFinite(a.duration) ? a.duration : t;
-        a.currentTime = Math.min(t, d);
-      } catch (e) {}
-      if (keepPlaying) {
-        try { const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
-      }
+        a.volume = effVol();
+        a.muted = mutedFallback;            // 保持静音兜底状态，等用户手势再解除
+        const p = a.play();
+        if (p && p.catch) p.catch(() => { armGesture(); showTip(); });
+      } catch (e) { armGesture(); showTip(); }
     }, { once: true });
   }
 
@@ -99,8 +106,8 @@ const BGM = (function () {
     if (els[key]) return els[key];
     const a = new Audio(blobUrls[key] || SRC[key]);
     a.loop = true;
-    // 不预下载：19MB 音频若与登录/接口抢带宽，会让进入游戏很慢（跨境尤甚）
-    a.preload = 'none';
+    // 已换成 128kbps（2.2–2.9MB），一打开页面就缓冲起播，不再等交互/8 秒
+    a.preload = 'auto';
     a.volume = effVol();
     els[key] = a;
     return a;
@@ -110,62 +117,84 @@ const BGM = (function () {
   }
 
   /* 浏览器拦截自动播放时：底部轻提示“点任意处即可开启”，避免用户误以为要去按开关 */
-  function showTip() {
-    if (document.getElementById('bgm-tip')) return;
-    const d = document.createElement('div');
-    d.id = 'bgm-tip';
-    d.textContent = '🔊 点击页面任意处开启背景音乐';
-    d.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;' +
-      'background:rgba(0,0,0,.72);color:#fff;padding:8px 14px;border-radius:999px;' +
-      'font-size:13px;letter-spacing:.5px;pointer-events:none';
-    document.body.appendChild(d);
+  function showTip(text) {
+    let d = document.getElementById('bgm-tip');
+    if (!d) {
+      d = document.createElement('div');
+      d.id = 'bgm-tip';
+      d.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;' +
+        'background:rgba(0,0,0,.78);color:#fff;padding:9px 16px;border-radius:999px;' +
+        'font-size:13px;letter-spacing:.5px;pointer-events:none;box-shadow:0 2px 12px rgba(0,0,0,.3)';
+      document.body.appendChild(d);
+    }
+    d.textContent = text || '🔊 点击页面任意处开启声音';
   }
   function hideTip() {
     const d = document.getElementById('bgm-tip');
     if (d) d.remove();
   }
 
-  /* 自动播放被拦截时：等首次用户交互（点击/按键）再补播 */
+  /* 自动播放被拦截时先静音播着（浏览器允许静音自动播放），
+     音乐进度/循环照常走，用户第一次点击任意处立刻恢复音量 —— 不会「点了才从头开始」。 */
+  function startMuted(a) {
+    if (mutedFallback) return;
+    mutedFallback = true;
+    try { a.muted = true; const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+    armGesture();
+    showTip();
+  }
+
+  /* 等首次用户交互（点击/按键）恢复有声播放 */
   function armGesture() {
     if (gestureArmed) return;
     gestureArmed = true;
     const retry = () => {
       document.removeEventListener('pointerdown', retry);
       document.removeEventListener('keydown', retry);
-      if (on) play(scene);
+      gestureArmed = false;
+      if (!on) return;
+      const a = els[scene];
+      if (a) { a.muted = false; a.volume = effVol(); }
+      mutedFallback = false;
+      hideTip();
+      play(scene);
     };
     document.addEventListener('pointerdown', retry);
     document.addEventListener('keydown', retry);
   }
 
-  function play(key) {
-    if (key) {
-      // 同一场景且正在播放 → 直接返回（render 每帧都会调用，避免音乐反复从头开始）
-      if (scene === key && els[key] && !els[key].paused) return;
-      scene = key;
-    }
-    if (!on) { pauseAll(); return; }
-    const a = el(scene);
-    prefetch(scene);                        // 切到哪首，就后台把哪首完整拉到本地
-    Object.keys(els).forEach(k => { if (k !== scene) { try { els[k].pause(); } catch (e) {} } });
-    a.volume = effVol();
-    // 只在要播这首时才真正加载它（切换场景才拉流）
-    if (a.preload !== 'auto') { a.preload = 'auto'; try { a.load(); } catch (e) {} }
+  function tryPlay(a) {
     try {
+      a.muted = false;
       const p = a.play();
       if (p && typeof p.then === 'function') {
-        p.then(hideTip).catch(err => {
-          const name = (err && (err.name || '')) + ' ' + ((err && err.message) || '');
-          if (/NotAllowed|gesture/i.test(name)) { armGesture(); showTip(); }
-          else {
-            // 非手势限制（例如音频尚未缓冲好）→ 等可播放时自动补一次
+        p.then(() => { mutedFallback = false; hideTip(); }).catch(err => {
+          const name = ((err && (err.name || '')) + ' ' + ((err && err.message) || ''));
+          if (/NotAllowed|gesture/i.test(name)) startMuted(a);
+          else if (!mutedFallback) {
+            // 缓冲尚未就绪 → 可播放时自动补一次，不需要用户操作
             a.addEventListener('canplay', () => {
-              if (on && scene === (key || scene)) { try { const q = a.play(); if (q && q.then) q.then(hideTip).catch(() => {}); } catch (e) {} }
+              if (wantPlaying && on) { try { const q = a.play(); if (q && q.catch) q.catch(() => {}); } catch (e) {} }
             }, { once: true });
           }
         });
-      } else { hideTip(); }
-    } catch (e) { armGesture(); showTip(); }
+      } else { mutedFallback = false; hideTip(); }
+    } catch (e) { startMuted(a); }
+  }
+
+  function play(key) {
+    if (key) {
+      // 同一场景且正在播放 → 直接返回（render 每帧都会调用，避免音乐反复从头开始）
+      if (scene === key && els[key] && !els[key].paused && !mutedFallback) return;
+      scene = key;
+    }
+    wantPlaying = true;
+    if (!on) { pauseAll(); return; }
+    const a = el(scene);
+    Object.keys(els).forEach(k => { if (k !== scene) { try { els[k].pause(); } catch (e) {} } });
+    a.volume = effVol();
+    prefetch(scene);                        // 切到哪首，就后台把哪首完整拉到本地
+    tryPlay(a);
   }
 
   function duck(on_) {
@@ -177,7 +206,8 @@ const BGM = (function () {
   function setOn(v) {
     on = !!v;
     try { localStorage.setItem(KEY_ON, on ? '1' : '0'); } catch (e) {}
-    if (on) play(scene); else { pauseAll(); hideTip(); }   // 主动关闭 → 不显示补播提示
+    if (on) play(scene);
+    else { wantPlaying = false; mutedFallback = false; pauseAll(); hideTip(); }  // 主动关闭 → 不显示补播提示
     syncUI();
   }
   function toggle() { setOn(!on); }
@@ -209,21 +239,12 @@ const BGM = (function () {
     });
     syncUI();
 
-    /* 首次交互（或 8 秒后兜底）才启动完整预取：不抢首屏、登录和联机握手的带宽。
-       正在唤醒/连接服务器时继续避让——免费实例冷启动那几十秒里，
-       再多一路 2.9MB 音频下载会明显拖慢登录请求。 */
-    const kick = () => {
-      if (prefetchStarted) return;
-      if (window.__DF_NET_BUSY) { setTimeout(kick, 4000); return; }
-      prefetchStarted = true;
-      prefetch(scene);
-    };
-    const onGesture = () => { kick(); };
-    document.addEventListener('pointerdown', onGesture);
-    document.addEventListener('keydown', onGesture);
-    setTimeout(kick, 8000);
-
-    play('setup');                          // 开始界面 BGM
+    /* 打开页面立刻起播（不再等首次交互 / 8 秒）；浏览器若拦截有声自动播放，
+       tryPlay 会退到静音播放 + 提示，首次点击即恢复音量。
+       完整预取稍晚 1.2 秒启动并用低优先级：避开首屏脚本与首播缓冲，
+       下完后换成本地 Blob，循环和切场景就不再走网络。 */
+    play('setup');
+    setTimeout(() => { prefetchArmed = true; prefetch(scene); }, 1200);
   }
 
   return {
