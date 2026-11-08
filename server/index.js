@@ -44,6 +44,9 @@ app.use(express.static(ROOT, {
     const p = String(filePath).replace(/\\/g, '/');
     if (/\/BGM\/|\/audio\//.test(p)) {
       res.setHeader('Cache-Control', 'public, max-age=604800, immutable');
+      // 线上音频此前 cf-cache-status: DYNAMIC（未命中 CDN 缓存，每个请求都回源 Render，
+      // 跨境吞吐抖动导致 BGM 缓冲断续）。显式要求 CDN 缓存一年，让边缘节点直接回音频。
+      res.setHeader('CDN-Cache-Control', 'public, max-age=31536000, immutable');
     } else {
       res.setHeader('Cache-Control', 'no-cache');
     }

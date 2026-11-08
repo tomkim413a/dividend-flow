@@ -38,9 +38,53 @@ const BGM = (function () {
   } catch (e) { /* localStorage 不可用 → 用默认值 */ }
 
   const els = {};                           // { setup: <audio>, game: <audio> }
+  const blobUrls = {};                      // 完整预取完成后的本地 objectURL
+  const prefetching = {};                   // 防止同一首重复下载
   let scene = 'setup';                      // 当前应播放的场景
   let ducked = false;
   let gestureArmed = false;
+  let prefetchStarted = false;
+
+  /* ------------------------------------------------------------
+   * 完整预取：把整首曲子下成本地 Blob 再交给 <audio>。
+   * 线上实测：音频经 Cloudflare 回源 Render（cf-cache-status: DYNAMIC，未命中缓存），
+   * 吞吐在 170–455 KB/s 间剧烈波动，且每个 Range 请求还有约 1.3s 跨境延迟。
+   * 7MB / 320kbps 的曲子靠边下边播，缓冲区一断就卡，循环播放时尤其明显。
+   * 一次性下完后播放完全走本地内存，循环、切场景都不再依赖网络。
+   * 只预取当前/即将切换的那一首，且等首次交互或页面空闲才启动，
+   * 避免重演「一进页面并发拉 19MB 拖慢登录」的老问题。
+   * ------------------------------------------------------------ */
+  function prefetch(key) {
+    if (!prefetchStarted || !key || !SRC[key] || blobUrls[key] || prefetching[key] || !on) return;
+    prefetching[key] = true;
+    fetch(SRC[key], { cache: 'force-cache' })
+      .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); })
+      .then(b => {
+        blobUrls[key] = URL.createObjectURL(b);
+        if (els[key]) swapToBlob(key, blobUrls[key]);
+      })
+      .catch(() => { /* 下载失败就保持原来的边下边播，不影响游戏 */ })
+      .finally(() => { prefetching[key] = false; });
+  }
+
+  /* 已经用网络源播着时换成本地源：保留播放进度与播放状态 */
+  function swapToBlob(key, url) {
+    const a = els[key];
+    if (!a || a.src === url) return;
+    const t = a.currentTime || 0;
+    const keepPlaying = scene === key && on && !a.paused;
+    a.src = url;
+    try { a.load(); } catch (e) {}
+    a.addEventListener('loadedmetadata', () => {
+      try {
+        const d = isFinite(a.duration) ? a.duration : t;
+        a.currentTime = Math.min(t, d);
+      } catch (e) {}
+      if (keepPlaying) {
+        try { const p = a.play(); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+      }
+    }, { once: true });
+  }
 
   function effVol() {
     return Math.max(0, Math.min(1, vol * (ducked ? DUCK : 1)));
@@ -50,7 +94,7 @@ const BGM = (function () {
   }
   function el(key) {
     if (els[key]) return els[key];
-    const a = new Audio(SRC[key]);
+    const a = new Audio(blobUrls[key] || SRC[key]);
     a.loop = true;
     // 不预下载：19MB 音频若与登录/接口抢带宽，会让进入游戏很慢（跨境尤甚）
     a.preload = 'none';
@@ -99,6 +143,7 @@ const BGM = (function () {
     }
     if (!on) { pauseAll(); return; }
     const a = el(scene);
+    prefetch(scene);                        // 切到哪首，就后台把哪首完整拉到本地
     Object.keys(els).forEach(k => { if (k !== scene) { try { els[k].pause(); } catch (e) {} } });
     a.volume = effVol();
     // 只在要播这首时才真正加载它（切换场景才拉流）
@@ -160,8 +205,18 @@ const BGM = (function () {
       r.addEventListener('input', () => setVol(Number(r.value) / 100));
     });
     syncUI();
-    play('setup');                          // 开始界面 BGM
 
+    /* 首次交互（或 3 秒后兜底）才启动完整预取：不抢首屏、登录和联机握手的带宽 */
+    const kick = () => {
+      if (prefetchStarted) return;
+      prefetchStarted = true;
+      prefetch(scene);
+    };
+    document.addEventListener('pointerdown', kick, { once: true });
+    document.addEventListener('keydown', kick, { once: true });
+    setTimeout(kick, 3000);
+
+    play('setup');                          // 开始界面 BGM
   }
 
   return {
