@@ -8,8 +8,8 @@
  *      多房间必须各自加载一份，否则会互相串局）。
  *   3. window 垫片：data.js 写 window.CF、engine.js 读 window.CF 并写 window.Engine，
  *      所以在沙箱里让 window 指向沙箱自身即可，零侵入。
- *   4. 服务端的 CF.TIMING 全部归零：规则即时推进，不做动画等待
- *      （动画节奏交给客户端渲染层）。
+ *   4. 联机对局保留 CF.TIMING 的动画节奏（逐格 emit → 逐格广播），并启用
+ *      ONLINE_TIMING 的联机专属节奏；只有批量模拟 opts.fast 才整体归零。
  * ============================================================ */
 'use strict';
 const fs = require('fs');
@@ -53,6 +53,13 @@ function createEngineContext(opts) {
   const CF = sandbox.CF;
   const Engine = sandbox.Engine;
   if (!CF || !Engine) throw new Error('引擎加载失败：CF=' + !!CF + ' Engine=' + !!Engine);
+
+  /* ★ 网络版专属节奏（2026-11-09）：服务端 vm 里托管的引擎就是「联机对局」，
+     这里启用真人每格 220–280 ms + 棋子落位后先停 500 ms 再弹事件。
+     浏览器单机直接加载 data.js，永远走不到这一行，因此单人版节奏完全不受影响
+     （单人版本次只跟着 SPEED_PRESETS 取消了「极快」档）。
+     必须在 opts.fast 归零之前调用：批量模拟会把数字字段整体清零（含 landDelayMs）。 */
+  if (typeof CF.applyOnlineTiming === 'function') CF.applyOnlineTiming();
 
   /* 节奏：联机必须保留 CF.TIMING 的动画节奏 ——
      引擎每走一格会 emit 一次，服务端逐步广播，客户端才会看到「一步一步走」并弹出对应事件。

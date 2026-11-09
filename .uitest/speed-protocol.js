@@ -9,11 +9,14 @@
  * 用法：PORT=3399 node server/index.js & node .uitest/speed-protocol.js
  * ============================================================ */
 'use strict';
+const fs = require('fs');
+const vm = require('vm');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const { io } = require(path.join(ROOT, 'server', 'node_modules', 'socket.io-client'));
 const { CS, SC } = require(path.join(ROOT, 'server', 'protocol'));
 const roomMgr = require(path.join(ROOT, 'server', 'room'));
+const { createEngineContext } = require(path.join(ROOT, 'server', 'engineHost'));
 
 const URL = process.env.URL || 'http://127.0.0.1:3399';
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -35,8 +38,13 @@ head('A 房间级速度：默认值 / 白名单 / 开局传入 / 运行中改档
   const r1 = roomMgr.createRoom(host);
   ck('新建房间使用默认档位', r1.speed === roomMgr.DEFAULT_SPEED, r1.speed);
 
-  const r2 = roomMgr.createRoom(host, '', 'fast');
-  ck('建房可指定档位', r2.speed === 'fast', r2.speed);
+  ck('★ 极快档已取消，只剩 3 档', createEngineContext().CF.SPEED_PRESETS.length === 3);
+
+  const r2 = roomMgr.createRoom(host, '', 'normal');
+  ck('建房可指定「快速」档', r2.speed === 'normal', r2.speed);
+  const rLegacy = roomMgr.createRoom(host, '', 'fast');
+  ck('★ 旧存档/旧客户端传 fast 会回落到默认档',
+    rLegacy.speed === roomMgr.DEFAULT_SPEED, rLegacy.speed);
 
   const r3 = roomMgr.createRoom(host, '', 'not-a-speed');
   ck('非法档位安全回落到默认', r3.speed === roomMgr.DEFAULT_SPEED, r3.speed);
@@ -45,7 +53,7 @@ head('A 房间级速度：默认值 / 白名单 / 开局传入 / 运行中改档
   ck('房间开局成功', !started.err, started.err || '');
   const g = r2.game;
   ck('★ 引擎按建房时指定的档位初始化',
-    g.CF.TIMING.speed === 'fast' && g.CF.TIMING.walkHold < 200,
+    g.CF.TIMING.speed === 'normal' && g.CF.TIMING.walkHold === 320,
     `speed=${g.CF.TIMING.speed} hold=${g.CF.TIMING.walkHold}`);
 
   const before = g.CF.TIMING.walkHold;
@@ -54,23 +62,48 @@ head('A 房间级速度：默认值 / 白名单 / 开局传入 / 运行中改档
   const set = roomMgr.setSpeed(r2.id, host.id, 'slow');
   ck('房主在对局中改档成功', !set.err && set.room.speed === 'slow', set.err || set.room.speed);
   ck('★ 改档即时作用到该房间的引擎（无需重开局）',
-    g.CF.TIMING.speed === 'slow' && g.CF.TIMING.walkHold > before * 3,
+    g.CF.TIMING.speed === 'slow' && g.CF.TIMING.walkHold > before * 2,
     `${before} → ${g.CF.TIMING.walkHold}`);
   ck('★ 服务端改档同样不影响真人节奏',
     humanKeys.every((k, i) => g.CF.TIMING[k] === humanBefore[i]),
     `${humanBefore} → ${humanKeys.map(k => g.CF.TIMING[k])}`);
 
   // 另一个房间：档位互不影响
-  const r4 = roomMgr.createRoom({ id: 'spd-other', username: '别人' }, '', 'fast');
+  const r4 = roomMgr.createRoom({ id: 'spd-other', username: '别人' }, '', 'normal');
   roomMgr.startGame(r4.id, () => {}, () => {});
   ck('★ 房间之间速度互不串扰',
-    r4.game.CF.TIMING.speed === 'fast' && g.CF.TIMING.speed === 'slow',
+    r4.game.CF.TIMING.speed === 'normal' && g.CF.TIMING.speed === 'slow',
     `别的房间=${r4.game.CF.TIMING.speed} 本房间=${g.CF.TIMING.speed}`);
 
-  const denied = roomMgr.setSpeed(r2.id, 'stranger', 'fast');
+  const denied = roomMgr.setSpeed(r2.id, 'stranger', 'normal');
   ck('对局中非房主改档被拒', !!denied.err, denied.err || '(错误地允许了)');
   const joined = roomMgr.joinRoom(r1.id, { id: 'spd-guest', username: '客人' });
   ck('未开局时非房主可以改档', !roomMgr.setSpeed(r1.id, 'spd-guest', 'slow').err, joined.err || '');
+
+  /* ---- 2026-11-09 联机专属节奏：只作用于服务端 vm 引擎 ---- */
+  const online = g.CF.TIMING;
+  ck('★ 联机引擎启用 onlineMode', online.onlineMode === true);
+  ck('★ 联机「落格 → 事件弹出」延迟 = 500 ms', online.landDelayMs === 500, String(online.landDelayMs));
+  ck('★ 联机真人每格下限 220 / 上限 280 ms',
+    online.humanWalkStepMin === 220 && online.humanWalkStepMax === 280,
+    `${online.humanWalkStepMin}~${online.humanWalkStepMax}`);
+  ck('★ 房间内改 AI 档位不会冲掉联机专属节奏',
+    online.onlineMode === true && online.landDelayMs === 500 &&
+    online.humanWalkStepMin === 220 && online.humanWalkStepMax === 280);
+
+  // 单人版：浏览器直接加载 data.js，永远不调用 applyOnlineTiming()
+  const sb = { console, setTimeout, clearTimeout, setInterval, clearInterval };
+  sb.window = sb; vm.createContext(sb);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'js', 'data.js'), 'utf8'), sb, { filename: 'data.js' });
+  const solo = sb.CF.TIMING;
+  ck('★ 单机不启用联机节奏（onlineMode=false / landDelayMs=0）',
+    solo.onlineMode === false && solo.landDelayMs === 0,
+    `online=${solo.onlineMode} land=${solo.landDelayMs}`);
+  ck('★ 单机真人每格仍是 90–220 ms（本次单人版不改节奏）',
+    solo.humanWalkStepMin === 90 && solo.humanWalkStepMax === 220,
+    `${solo.humanWalkStepMin}~${solo.humanWalkStepMax}`);
+  const sim = createEngineContext({ fast: true }).CF.TIMING;
+  ck('★ 批量模拟上下文归零后没有落格延迟', sim.landDelayMs === 0, String(sim.landDelayMs));
 }
 
 /* ---------------- B 真实 Socket 协议 ---------------- */
@@ -108,10 +141,10 @@ async function socketTests() {
   await wait(300);
   ck('第二名玩家成功加入房间', rooms2.length > 0 && rooms2[rooms2.length - 1].id === roomId, roomId);
 
-  s1.emit(CS.SET_SPEED, { speed: 'fast' });
+  s1.emit(CS.SET_SPEED, { speed: 'normal' });
   await wait(300);
-  ck('★ SET_SPEED 后两个客户端都收到新档位',
-    rooms1.some(r => r.speed === 'fast') && rooms2.some(r => r.speed === 'fast'),
+  ck('★ SET_SPEED 后两个客户端都收到新档位「快速」',
+    rooms1.some(r => r.speed === 'normal') && rooms2.some(r => r.speed === 'normal'),
     `房主=${rooms1.map(r => r.speed)} 客人=${rooms2.map(r => r.speed)}`);
 
   s1.emit(CS.SET_SPEED, { speed: 'bogus' });
@@ -128,10 +161,11 @@ async function socketTests() {
   ck('★ 对局中非房主改档被明确拒绝',
     errs2.some(m => /房主/.test(m || '')), JSON.stringify(errs2));
 
-  s1.emit(CS.SET_SPEED, { speed: 'normal' });
+  const nBefore = rooms1.length;
+  s1.emit(CS.SET_SPEED, { speed: 'slow' });
   await wait(300);
-  ck('★ 房主在对局中仍可改档', rooms1.some(r => r.speed === 'normal'),
-    JSON.stringify(rooms1.map(r => r.speed)));
+  ck('★ 房主在对局中仍可改档', rooms1.slice(nBefore).some(r => r.speed === 'slow'),
+    JSON.stringify(rooms1.slice(nBefore).map(r => r.speed)));
 
   s1.disconnect(); s2.disconnect();
 }

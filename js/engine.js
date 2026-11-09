@@ -225,6 +225,21 @@
     return Math.max(min, Math.min(max, Math.round(total / steps)));
   };
 
+  /* ★ 落格可读延迟（仅联机 / 网络版）—— 2026-11-09 玩家要求：
+     最后一格走完、棋子已经画在目标格上之后，先停约 0.5 秒才弹事件，
+     否则「还没看清走在哪个棋位上，事件就弹出来了」。
+     · 单机 / 批量模拟：onlineMode=false 或 landDelayMs=0 → 原样返回 stepMs，行为零变化；
+     · 联机：只对会触发 landEvent 的格子加延迟（payday 不弹窗，不空等 0.5 秒拖慢节奏），
+       且固定 500 ms、不随 AI 档位缩放 —— 慢速档不会等太久，快速档也看得清。
+     延迟发生在服务端的权威引擎里：逐格 emit 已经把棋子画到终点，客户端在这 500 ms
+     期间保持「即将落格…」，随后才收到带 pending 的快照弹出事件窗。 */
+  const landDelayFor = (p, stepMs) => {
+    if (!WALK.onlineMode || !(WALK.landDelayMs > 0)) return stepMs;
+    const cell = CF.HAMSTER_BOARD[p && p.hamsterPos];
+    if (!cell || cell.type === 'payday') return stepMs;
+    return WALK.landDelayMs;
+  };
+
   // charityDice = 上一回合捐过款攒下的双骰额度，在【下一次轮到自己掷骰】时兑现
   function doRoll() {
     const p = cur();
@@ -276,7 +291,7 @@
     if (p.dead) { S.walk = null; S.await = null; finishTurn(); return; }
     emit();
     if (w.left > 0) laterFree(tick, w.stepMs);
-    else laterFree(() => finishMove(p, w.steps), w.stepMs);
+    else laterFree(() => finishMove(p, w.steps), landDelayFor(p, w.stepMs));
   }
 
   function finishMove(p, steps) {
@@ -665,7 +680,10 @@
     if (S.walk) {
       if (S.walk.left > 0) { laterFree(tick, S.walk.stepMs); return; }
       const w = S.walk; S.walk = null;
-      laterFree(() => finishMove(S.players[w.idx], w.steps), 0);
+      const p2 = S.players[w.idx];
+      // 单机 / 批量模拟保持原来的 0 延迟；联机只在会弹事件的落格先停 0.5 秒
+      const delay = WALK.onlineMode ? landDelayFor(p2, 0) : 0;
+      laterFree(() => finishMove(p2, w.steps), delay);
       return;
     }
     // ② 上一次换人被弹窗挡下（旧版会静默丢弃 → 永久卡死），现在补做

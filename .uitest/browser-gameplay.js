@@ -46,13 +46,22 @@ function ck(name, ok, detail) {
     hold: window.CF.TIMING.walkHold,
     humanHold: window.CF.TIMING.humanWalkHold,
     presets: window.CF.SPEED_PRESETS.map(p => p.key),
+    online: window.CF.TIMING.onlineMode,
+    land: window.CF.TIMING.landDelayMs,
+    humanMin: window.CF.TIMING.humanWalkStepMin,
+    humanMax: window.CF.TIMING.humanWalkStepMax,
     selects: document.querySelectorAll('[data-speed-select]').length,
     setupVal: (document.getElementById('setup-speed') || {}).value,
     topVal: (document.getElementById('game-speed') || {}).value,
     lobbyVal: (document.getElementById('lobby-speed') || {}).value,
     hint: (document.getElementById('setup-speed-hint') || {}).textContent
   }));
-  ck('默认「舒缓」档、四档齐全', speed.key === 'relaxed' && speed.presets.length === 4, JSON.stringify(speed));
+  ck('默认「舒缓」档、三档齐全（极快已取消）',
+    speed.key === 'relaxed' && speed.presets.length === 3 && !speed.presets.includes('fast'),
+    JSON.stringify(speed));
+  ck('★ 浏览器单机不启用联机节奏（真人仍 90–220 ms / 无落格延迟）',
+    speed.online === false && speed.land === 0 && speed.humanMin === 90 && speed.humanMax === 220,
+    JSON.stringify({ online: speed.online, land: speed.land, min: speed.humanMin, max: speed.humanMax }));
   ck('开始页 / 顶栏 / 联机大厅三处下拉都已填充且同步',
     speed.selects === 3 && speed.setupVal === speed.key && speed.topVal === speed.key && speed.lobbyVal === speed.key,
     JSON.stringify(speed));
@@ -80,7 +89,7 @@ function ck(name, ok, detail) {
   ck('档位已持久化（file:// 禁用存储时允许为 null）',
     changed.saved === 'slow' || changed.saved === null, String(changed.saved));
 
-  // 单手耗时测试固定用「标准」档，避免被慢速档拉长
+  // 单手耗时测试固定用「快速」档（原「标准」），避免被慢速档拉长
   await page.evaluate(() => {
     const sel = document.getElementById('setup-speed');
     sel.value = 'normal'; sel.dispatchEvent(new Event('change'));
