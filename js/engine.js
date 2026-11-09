@@ -13,11 +13,24 @@
   // 教练讲解模式下：讲解卡（语音）未读完时，把所有“回合级/决策级”引擎定时器收进
   // _coachDeferred 冻结，读完再 coachRelease() 放行，使 AI 演示动作严格跟随语音。
   // 走格动画用 laterFree（不受冻结），让“掷骰+走格”与语音同步进行，不卡在讲解后。
+  // ⚠️ 定时器必须分槽：AI/讲解用 _timer，走格用 _walkTimer。
+  //    旧版两者共用 _timer，laterFree() 的 clearTimeout 会把尚未触发的 AI 决策定时器
+  //    一起清掉（反之亦然），表现为「掷完骰子/翻卡后卡在半路、回合不推进」。
   const later = (fn, ms) => {
     if (Engine._coachGate && Engine._coachGate()) { Engine._coachDeferred = { fn, ms }; return; }
-    clearTimeout(Engine._timer); Engine._timer = setTimeout(fn, ms);
+    clearTimeout(Engine._timer);
+    Engine._timer = setTimeout(() => { Engine._timer = null; fn(); }, ms);
   };
-  const laterFree = (fn, ms) => { clearTimeout(Engine._timer); Engine._timer = setTimeout(fn, ms); };
+  const laterFree = (fn, ms) => {
+    clearTimeout(Engine._walkTimer);
+    Engine._walkTimer = setTimeout(() => { Engine._walkTimer = null; fn(); }, ms);
+  };
+  // 一局结束 / 重开时清干净，避免上一局的定时器打到新一局的模块级 S 上
+  const clearTimers = () => {
+    clearTimeout(Engine._timer); clearTimeout(Engine._walkTimer);
+    Engine._timer = Engine._walkTimer = null;
+    Engine._coachDeferred = null;
+  };
 
   let S = null;
   let uidSeq = 1;
@@ -130,6 +143,7 @@
   }
 
   function start(cfg) {
+    clearTimers();                  // 重开一局：先掐掉上一局遗留的走格 / AI 定时器
     S = {
       cfg, players: cfg.map(buildPlayer), cur: 0,
       market: CF.STOCKS.map(s => Object.assign({}, s, {
@@ -140,7 +154,9 @@
       })),
       logs: [], toasts: [], queue: [], pending: null, await: 'roll', dice: [0], turn: 0, over: null, winner: null,
       liq: null, recorded: false,     // liq=最近一次破产变卖清单（供 UI 逐笔回放）；recorded=战绩已落库
-      gate: false                     // gate=换人弹窗未确认前挂起自动推进（AI 也不会自己掷骰）
+      gate: false,                    // gate=换人弹窗未确认前挂起自动推进（AI 也不会自己掷骰）
+      walk: null,                     // 走格进度（纯数据）：弹窗打断后据此续走，不再丢剩余步数
+      needFinish: false               // finishTurn 被弹窗挡下时挂起，弹窗关闭后补做
     };
     assignAiStyles();          // 先定 AI 投资性格（激进 / 稳健）
     log('🎬 股息流游戏开始！目标：让股息被动收入 > 月支出，走到银行结算日即可胜出。', 'lg');
@@ -159,7 +175,13 @@
   function beginTurn() {
     const p = cur();
     if (!p) return;
-    if (p.won || p.dead) { finishTurn(); return; }
+    if (p.won || p.dead) {
+      // 异常兜底：所有座位都出局却没置 over 时，别在 finishTurn ↔ beginTurn 之间无限递归
+      if (S.players.every(x => x.dead || x.won)) {
+        S.over = true; S.winner = null; recordGame(); emit(); return;
+      }
+      finishTurn(); return;
+    }
     S.turn++;
     if (p.skip) {
       p.skip = false;
@@ -177,8 +199,11 @@
 
   function finishTurn() {
     if (S.over) { emit(); return; }
+    // 旧版在这里直接 return 且无任何后续驱动 → 引擎永久停摆。
+    // 现在挂起标记，等决策弹窗关闭后由 runQueue() 补做换人。
+    if (S.pending || S.await === 'pending') { S.needFinish = true; return; }
+    S.needFinish = false;
     S.pending = null;
-    if (S.await === 'pending') return;
     S.cur = (S.cur + 1) % S.players.length;
     { const _s = sfx(); if (_s) _s.turn(); }   // 切换玩家：专属轻提示音
     beginTurn();
@@ -212,34 +237,40 @@
     laterFree(() => walk(p, steps), WALK.walkHold);   // 走格与讲解卡语音并行，不被教练冻结
   }
 
-  // 一格一格走过去：每步更新位置并刷新画面，路过结算日当场结算
+  // 一格一格走过去：进度存进 S.walk（纯数据、可序列化）。
+  // 旧版用闭包变量 left，一旦途中弹出决策窗口就 return 丢弃整个链，
+  // 剩余步数和落格事件永久丢失、回合卡在半路。现在改为「暂停 / 续走」。
   function walk(p, steps) {
     if (!S || S.over || !p || steps < 1) return;
-    const n = CF.HAMSTER_SIZE;
     const stepMs = Math.max(WALK.walkStepMin, Math.min(WALK.walkStepMax, Math.round(WALK.walkTotal / steps)));
-    let left = steps;
-
-    const tick = () => {
-      if (S.over) return;
-      if (S.pending || S.await === 'pending') return;
-      left--;
-      p.hamsterPos = (p.hamsterPos + 1) % n;
-      { const _s = sfx(); if (_s) _s.step(steps - left); }   // 每走一格一声轻响
-      if (p.hamsterPos === 0) {
-        bankSettle(p);
-        if (S.queue.length) { runQueue(); return; }
-        if (S.over || S.pending || S.await === 'pending') return;
-      }
-      if (p.dead) { S.await = null; finishTurn(); return; }
-      emit();
-      if (left > 0) laterFree(tick, stepMs);
-      else laterFree(() => finishMove(p, steps), stepMs);
-    };
+    S.walk = { idx: S.players.indexOf(p), left: steps, steps, stepMs };
     laterFree(tick, stepMs);
   }
 
+  function tick() {
+    const w = S && S.walk;
+    if (!S || S.over || !w) return;
+    if (S.pending || S.await === 'pending') return;   // 暂停；choose() → runQueue() 会续上
+    const p = S.players[w.idx];
+    if (!p) { S.walk = null; return; }
+    w.left--;
+    p.hamsterPos = (p.hamsterPos + 1) % CF.HAMSTER_SIZE;
+    { const _s = sfx(); if (_s) _s.step(w.steps - w.left); }   // 每走一格一声轻响
+    if (p.hamsterPos === 0) {
+      bankSettle(p);
+      if (S.queue.length) { runQueue(); return; }   // runQueue 负责续走 / 结束 / 挂起换人
+      if (S.over || S.pending || S.await === 'pending') return;
+    }
+    if (p.dead) { S.walk = null; S.await = null; finishTurn(); return; }
+    emit();
+    if (w.left > 0) laterFree(tick, w.stepMs);
+    else laterFree(() => finishMove(p, w.steps), w.stepMs);
+  }
+
   function finishMove(p, steps) {
-    if (!S || S.over || S.pending || S.await === 'pending') return;
+    if (!S) return;
+    S.walk = null;
+    if (S.over || !p || S.pending || S.await === 'pending') return;
     const cell = CF.HAMSTER_BOARD[p.hamsterPos];
     log(`${p.name} 前进 ${steps} 格 → ${cell.ic} ${cell.name}`, '');
     if (cell.type !== 'payday') S.queue.push(() => landEvent(p, cell));
@@ -605,15 +636,37 @@
 
   /* ---------- 队列驱动 ---------- */
   function runQueue() {
+    if (!S) return;
+    if (!Array.isArray(S.queue)) S.queue = [];   // 兼容旧版 / 联机快照缺字段
     let guard = 0;
     while (S.queue.length && guard++ < 100) {
       if (S.pending || S.await === 'pending' || S.over) return;
       const fn = S.queue.shift();
+      // 联机快照经 JSON 序列化会把队列里的函数变成 null，防御性跳过
+      if (typeof fn !== 'function') continue;
       fn();
     }
-    if (!S.pending && S.await === 'busy') {
-      // 注意：捐过款的玩家【不在这里立刻再掷一次】——慈善换来的双骰留到 TA 的
-      // 下一回合才兑现（doRoll 里检测到 charityDice 就会掷两颗并清掉标记）。
+    if (S.over) return;
+    if (S.pending || S.await === 'pending') return;
+
+    // ① 走格被决策弹窗打断：先续走剩下的格子，绝不直接换人 / 丢落格事件
+    if (S.walk) {
+      if (S.walk.left > 0) { laterFree(tick, S.walk.stepMs); return; }
+      const w = S.walk; S.walk = null;
+      laterFree(() => finishMove(S.players[w.idx], w.steps), 0);
+      return;
+    }
+    // ② 上一次换人被弹窗挡下（旧版会静默丢弃 → 永久卡死），现在补做
+    if (S.needFinish) {
+      S.needFinish = false;
+      S.await = null;
+      finishTurn();
+      return;
+    }
+    // ③ 正常收尾
+    // 注意：捐过款的玩家【不在这里立刻再掷一次】——慈善换来的双骰留到 TA 的
+    // 下一回合才兑现（doRoll 里检测到 charityDice 就会掷两颗并清掉标记）。
+    if (S.await === 'busy') {
       S.await = null;
       emit();
       finishTurn();
@@ -742,13 +795,23 @@
   /* ---------- 对外 API ---------- */
   const Engine = {
     _timer: null,
+    _walkTimer: null,              // 走格专用槽位（与 AI/讲解定时器隔离）
     _coachDeferred: null,          // 教练讲解冻结期间，被挂起的引擎定时器
     // 讲解读完时由 render 调用：把挂起的定时器恢复执行（会自动再尊重 gate）
     coachRelease: () => { const d = Engine._coachDeferred; Engine._coachDeferred = null; if (d) later(d.fn, d.ms); },
     start,
     state: () => S,
     // 联机模式：注入服务端下发的权威状态（客户端不再本地跑规则，只做渲染 + 纯函数计算）
-    hydrate: s => { S = s || null; },
+    hydrate: s => {
+      S = s || null;
+      // 联机快照字段兜底：缺数组时 render / runQueue 不应抛异常中断整条渲染链
+      if (S) {
+        if (!Array.isArray(S.queue)) S.queue = [];
+        if (!Array.isArray(S.logs)) S.logs = [];
+        if (!Array.isArray(S.toasts)) S.toasts = [];
+        if (!Array.isArray(S.players)) S.players = [];
+      }
+    },
     cur,
     onRender: fn => { _renderer = fn; },
     setRender: fn => { _renderer = fn; },
@@ -756,7 +819,21 @@
     act: { roll: doRoll, choose, payDebt, sellStock },
     // 换人弹窗：gate(true) 挂起自动推进，gate(false)+resume() 放行并补一次驱动
     gate: v => { if (S) S.gate = !!v; },
-    resume: () => { if (S && !S.over && !S.gate) drive(); },
+    resume: () => {
+      if (!S || S.over || S.gate) return;
+      // 讲解卡把 AI 定时器冻结后，S.await 会停在 'busy' 且没有任何待执行定时器；
+      // drive() 只认 'roll' / 'pending'，此时会永久停摆。放行时先把挂起的定时器解冻。
+      if (Engine._coachDeferred) {
+        if (!(Engine._coachGate && Engine._coachGate())) Engine.coachRelease();
+        return;
+      }
+      // 兜底解锁：任何原因遗留的孤儿 'busy'（无弹窗、无走格进度、无待执行定时器）
+      // 一律拉回等待态，避免「切换玩家后按钮全无、怎么点都没反应」。
+      if (!S.pending && S.await === 'busy' && !S.walk && !Engine._timer && !Engine._walkTimer) {
+        S.await = 'roll';
+      }
+      drive();
+    },
     _dbg: { bailout, autoLiquidate, marketTick }  // 仅供回归脚本直接触发（破产保护 / 行情波动）
   };
   window.Engine = Engine;

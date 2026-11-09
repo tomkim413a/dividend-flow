@@ -6,16 +6,23 @@
 const { createEngineContext, buildCfg } = require('./engineHost');
 
 /** 深拷贝一份可序列化的状态快照（避免把引擎内部引用直接发出去）
- *  同时精简体积以降低网络延迟：行情历史只留最近 80 点、日志只留最新 120 条 */
+ *  同时精简体积以降低网络延迟：行情历史只留最近 80 点、日志只留最新 60 条 */
 function snapshot(S) {
   try {
     const snap = JSON.parse(JSON.stringify(S));
+    /* 引擎内部字段不下发：S.queue 里装的是函数，JSON 序列化会变成 [null]，
+       客户端 hydrate 后一旦误触发本地规则就会 TypeError 并中断渲染。
+       直接给成干净的空数组/默认值；S.walk 是纯数据（剩余格数），
+       客户端顶部状态栏要用它显示「前进中…还剩 N 格」，必须保留。 */
+    snap.queue = [];
+    snap.gate = false;
+    snap.needFinish = false;
     if (Array.isArray(snap.market)) {
       snap.market.forEach(m => {
         if (Array.isArray(m.hist) && m.hist.length > 80) m.hist = m.hist.slice(-80);
       });
     }
-    if (Array.isArray(snap.logs) && snap.logs.length > 120) snap.logs = snap.logs.slice(0, 120);
+    if (Array.isArray(snap.logs) && snap.logs.length > 60) snap.logs = snap.logs.slice(0, 60);
     return snap;
   } catch (e) { return null; }
 }

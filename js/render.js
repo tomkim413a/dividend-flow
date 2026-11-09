@@ -184,19 +184,27 @@
   // 弹窗确认前会【闸住引擎】（Engine.gate(true)），所以 AI 不会自己先掷骰，
   // 必须等有人点掉「确定」才开始行动；确认后放行并重新驱动 AI。
   // 触发口径：只要本局【玩家数 ≥2】就弹（单人局没有“换人”这回事，不弹）。
-  function resetHandoff() { UI.handoff = null; UI.hoIdx = -1; Engine.gate(false); }
+  // 联机对局：规则引擎跑在服务端，客户端只做渲染
+  function isOnlineGame() { return !!(window.NET && NET.on && NET.onlineMode); }
+  function resetHandoff() { UI.handoff = null; UI.hoIdx = -1; if (!isOnlineGame()) Engine.gate(false); }
   function checkHandoff(S) {
     // 教学演示期间不弹交接框：由解说条讲解“轮到谁”，保证演示连贯、不用一直点确定
     if (COACH.on) { UI.handoff = null; return; }
     const p = Engine.cur();
     if (S.over || !p || S.players.length < 2 || p.dead || p.won) {
-      UI.handoff = null; Engine.gate(false); return;
+      UI.handoff = null;
+      if (!isOnlineGame()) Engine.gate(false);
+      return;
     }
     if (S.await !== 'roll') return;      // 只在“等待掷骰”这个干净时刻提示，避免打断决策弹窗
     if (UI.hoIdx === S.cur) return;      // 本回合已提示过，不再重复
     UI.hoIdx = S.cur;
-    UI.handoff = { idx: S.cur };
-    Engine.gate(true);                   // 闸住：AI 也要等确认后才动
+    const online = isOnlineGame();
+    UI.handoff = { idx: S.cur, passive: online };
+    /* ★ 联机时绝不 gate/resume 本地引擎：旧版点「确定」会 Engine.resume()，
+       在浏览器里另跑一套规则与走格定时器，与服务端权威状态分叉，
+       表现为「切换玩家后按钮时有时无、画面卡住」。联机版只做纯展示提示。 */
+    if (!online) Engine.gate(true);
   }
   function handoffModal(S) {
     const i = UI.handoff.idx, p = S.players[i];
@@ -226,8 +234,10 @@
     if (ok) {
       ok.focus();                        // 聚焦后可直接敲回车 / 空格确认
       ok.onclick = () => {
+        const passive = !!(UI.handoff && UI.handoff.passive);   // 联机：纯展示
         UI.handoff = null;
-        Engine.gate(false);              // 放行
+        if (passive) { render(); return; }                      // 不碰本地引擎
+        Engine.gate(false);              // 单机：放行
         render();
         Engine.resume();                 // 重新驱动：AI 这时才真正开始掷骰
       };
@@ -334,6 +344,13 @@
       ? (cur.charityDice ? 'AI 思考中…（本回合双骰）' : 'AI 思考中…')
       : (cur.charityDice ? '🕊️ 本回合可掷两颗骰子！也可先卖出持仓' : '可先卖出持仓，再掷骰子');
     else if (S.await === 'pending') msg = (S.pending && S.pending.type === 'liquidate') ? '现金不足，必须变卖资产清偿' : '做出你的选择 ↓';
+    // 「掷骰 → 走格 → 落格」全程给可见反馈：旧版整段只显示「…」且掷骰按钮隐藏，
+    // 玩家分不清是卡死还是在演动画，这正是「投骰子时卡住」的主要体感来源。
+    else if (S.walk) msg = S.walk.left > 0
+      ? `🎲 前进中…还剩 ${S.walk.left} 格`
+      : '🎲 即将落格…';
+    else if (S.await === 'busy' && S.dice && S.dice.length)
+      msg = `🎲 掷出 ${S.dice.reduce((a, b) => a + b, 0)} 点，准备出发…`;
     else msg = '…';
     st.innerHTML = `🐹 仓鼠赛跑 · ${who} 回合 — ${msg}`;
     const show = S.await === 'roll' && !cur.ai && !cur.dead && !S.over;
@@ -878,10 +895,19 @@
     const top = Math.max(floor, Math.min(bottom, cap));
     document.documentElement.style.setProperty('--modal-top', Math.round(top) + 'px');
   }
-  function showModal(html) { syncModalTop(); $('#mbody').innerHTML = html; $('#modal').classList.remove('hidden'); }
+  function showModal(html) {
+    syncModalTop();
+    const b = $('#mbody');
+    b.innerHTML = html;
+    // 任何来源的弹窗都会顶掉「同一次决策」的缓存标记：
+    // 下次 renderModal 必须重建决策窗，不能因为 key 相同就跳过。
+    b.removeAttribute('data-modal-key');
+    $('#modal').classList.remove('hidden');
+  }
   function hideModal() {
     $('#modal').classList.add('hidden');
     $('#mbody').innerHTML = '';
+    $('#mbody').removeAttribute('data-modal-key');
     const card = $('.mcard');
     if (card) card.classList.remove('wide');   // 说明演示用过的加宽卡片要还原
   }
@@ -1007,6 +1033,11 @@
       const h = Engine.h.holding(p, sym);
       const px = Engine.h.curStockPx(sym);
       if (!h) { UI.sell = null; hideModal(); render(); return; }
+      // 同一次「卖出」决策不重建 DOM，否则正在输入的股数会被状态广播清空
+      const sellKey = 'sell:' + sym + ':' + S.turn + ':' + S.cur;
+      const b0 = $('#mbody');
+      if ($('#modal') && !$('#modal').classList.contains('hidden')
+          && b0.getAttribute('data-modal-key') === sellKey) return;
       html = `<h3>📤 卖出 ${h.icon} ${esc(h.name)}</h3>
         <div class="ptext">现价 <span class="money">${money(px)}</span>/股 · 你持有 ${h.shares} 股（成本 ${money(h.avg)}）<br>预计到账 <b id="sell-total">${money(px * h.shares)}</b></div>
         <label class="amount">卖出股数（最多 ${h.shares}）</label>
@@ -1016,6 +1047,7 @@
           <button class="btn" id="btn-sell-no">取消</button>
         </div>`;
       showModal(html);
+      b0.setAttribute('data-modal-key', sellKey);
       const input = $('#amt');
       input.addEventListener('input', () => {
         const n = Math.min(h.shares, Math.max(1, Math.floor(+input.value) || 0));
@@ -1033,6 +1065,14 @@
     switch (pd.type) {
       case 'stock': {
         const st = S.market.find(m => m.sym === pd.sym);
+        // 联机快照偶尔缺行情条目时，绝不能让 render() 抛异常中断整条渲染链
+        // （旧版会表现为「翻到机会卡后整个界面卡住、按钮全失效」）
+        if (!st) {
+          html = `<h3>💼 股票机会卡</h3>
+            <div class="ptext">行情数据尚未就绪，可先跳过本次机会。</div>
+            <div class="mbtns"><button class="btn" data-act="pass">跳过</button></div>`;
+          break;
+        }
         const isDiv = pd.cat === 'div';
         const maxShares = Math.floor(p.cash / pd.price);
         const gainHint = (() => {
@@ -1154,10 +1194,22 @@
       }
     }
     if (!html) return;
-    // 破产变卖弹窗里有玩家正在填的股数输入框：同一次决策期间不重建 DOM，避免把输入清空
-    if (pd.type === 'liquidate' && UI.liqRef === pd) return;
-    if (pd.type === 'liquidate') UI.liqRef = pd;
+    /* ★ 同一次决策期间绝不重建弹窗 DOM。
+       旧版只对 liquidate 用 UI.liqRef === pd（对象引用）做保护，但联机每次
+       applyState 都 hydrate 一个全新对象，引用永远不相等 → 每收到一次状态广播
+       就把 #mbody.innerHTML 换掉：玩家填的股数被清空、焦点丢失，点击恰好落在
+       被替换的节点上就「点了没反应」，表现为「生成事件时卡住」。
+       改用「决策签名 + DOM 上的标记」，单机/联机同样可靠。 */
+    const key = JSON.stringify([
+      S.turn, S.cur, pd && pd.type, pd && pd.sym, pd && pd.price,
+      pd && pd.amt, pd && pd.donation, pd && pd.deficit,
+      pd && pd.house && pd.house.name, UI.sell || ''
+    ]);
+    const box = $('#mbody');
+    const visible = $('#modal') && !$('#modal').classList.contains('hidden');
+    if (box && visible && box.getAttribute('data-modal-key') === key) return;
     showModal(html);
+    box.setAttribute('data-modal-key', key);
     if (pd.type === 'liquidate' && $('#btn-liq-ok')) bindLiquidate(p);
     $('#mbody').querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
       const act = b.dataset.act;
@@ -1872,6 +1924,16 @@
 
   /* ================= 联机模式对外接口（供 js/online.js 调用） =================
      联机时客户端不跑规则：状态由服务端权威下发，这里只负责注入 + 刷新画面。 */
+  /* 同一帧内连续到达的状态包合并成一次渲染：服务端每走一格广播一次，
+     重连补包时十几个 STATE 会挤在一起，逐包全量重绘 12 个区域会阻塞主线程。 */
+  let rafPending = false;
+  function scheduleRender() {
+    if (rafPending) return;
+    rafPending = true;
+    const go = () => { rafPending = false; render(); };
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(go);
+    else setTimeout(go, 16);
+  }
   window.ONLINE_HOOKS = {
     // 进入对局画面（隐藏开始界面 / 显示游戏界面 / 切对局 BGM）
     enter: function () {
@@ -1899,7 +1961,7 @@
         });
       }
       Engine.hydrate(st);
-      render();
+      scheduleRender();
     },
     // 对局结束
     over: function (info) {

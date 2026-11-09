@@ -60,7 +60,7 @@
   /* ---------------- 网络状态浮层 ----------------
      动态创建、不占 index.html；pointer-events:none 保证绝不挡住游戏按钮。 */
   let netToastEl = null;
-  function netToast(text, ok) {
+  function netToast(text, ok, ms) {
     if (!text) {
       if (netToastEl) netToastEl.style.display = 'none';
       return;
@@ -82,15 +82,16 @@
     netToastEl.style.color = '#fff';
     netToastEl.style.border = '1px solid ' + (ok ? '#2fb37a' : '#d9613f');
     clearTimeout(netToastEl._hide);
-    if (ok) netToastEl._hide = setTimeout(() => {
+    const delay = ms || (ok ? 3000 : 0);
+    if (delay) netToastEl._hide = setTimeout(() => {
       if (netToastEl) netToastEl.style.display = 'none';
-    }, 3000);
+    }, delay);
   }
 
   /* ---------------- 联机组件：后台顺序加载 ----------------
      顺序加载最稳：protocol.js → socket.io → net.js，后者依赖前者的 CS/SC/io。
      全程后台、失败可重试，不再阻塞登录框，也不再弹「加载超时」alert。 */
-  const SCRIPTS = ['/protocol.js', '/socket.io/socket.io.js', 'js/net.js?v=20261108d'];
+  const SCRIPTS = ['/protocol.js', '/socket.io/socket.io.js', 'js/net.js?v=20261108e'];
   let scriptsPromise = null;
   function loadScripts() {
     if (scriptsPromise) return scriptsPromise;
@@ -409,8 +410,11 @@
 
     NET.onEvent('error', m => {
       const box = el('lobby-overlay');
-      if (box && !box.classList.contains('hidden')) lobbyMsg('⚠️ ' + (m || '操作失败'));
-      else { try { window.alert('联机提示：' + (m || '操作失败')); } catch (e) {} }
+      const text = '⚠️ ' + (m || '操作失败');
+      if (box && !box.classList.contains('hidden')) lobbyMsg(text);
+      /* ★ 对局中绝不用 window.alert：它会冻结浏览器主线程，引擎定时器、
+         socket 收包和所有按钮一起停摆，用户看到的就是「画面卡住」。 */
+      else netToast(text, false, 3500);
     });
 
     NET.onEvent('state', st => {

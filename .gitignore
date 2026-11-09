@@ -15,4 +15,13 @@ server/.env
 .DS_Store
 Thumbs.db
 *.log
-.uitest/
+
+# 本地 UI 测试：只跟踪可复跑的回归脚本，忽略截图 / 临时产物 / 浏览器依赖
+.uitest/*
+!.uitest/diagnose-engine.js
+!.uitest/browser-gameplay.js
+!.uitest/socket-game.js
+!.uitest/regression-stable.js
+!.uitest/e2e-local.js
+!.uitest/package.json
+!.uitest/package-lock.json
