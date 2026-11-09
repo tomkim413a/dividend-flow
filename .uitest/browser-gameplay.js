@@ -44,6 +44,7 @@ function ck(name, ok, detail) {
   const speed = await page.evaluate(() => ({
     key: window.CF.TIMING.speed,
     hold: window.CF.TIMING.walkHold,
+    humanHold: window.CF.TIMING.humanWalkHold,
     presets: window.CF.SPEED_PRESETS.map(p => p.key),
     selects: document.querySelectorAll('[data-speed-select]').length,
     setupVal: (document.getElementById('setup-speed') || {}).value,
@@ -55,7 +56,9 @@ function ck(name, ok, detail) {
   ck('开始页 / 顶栏 / 联机大厅三处下拉都已填充且同步',
     speed.selects === 3 && speed.setupVal === speed.key && speed.topVal === speed.key && speed.lobbyVal === speed.key,
     JSON.stringify(speed));
-  ck('档位说明已显示', /每格|AI 每手/.test(speed.hint || ''), speed.hint);
+  ck('档位说明已显示且明确只讲 AI', /AI 每格|AI 每手/.test(speed.hint || ''), speed.hint);
+  ck('界面把「AI 可调 / 真人固定」分成两个独立单元',
+    (await page.locator('.speed-fixed').count()) === 2, String(await page.locator('.speed-fixed').count()));
 
   const changed = await page.evaluate(() => {
     const sel = document.getElementById('setup-speed');
@@ -65,11 +68,15 @@ function ck(name, ok, detail) {
     try { saved = localStorage.getItem('cf_speed_v1'); } catch (e) { /* file:// 可能禁用存储 */ }
     return {
       key: window.CF.TIMING.speed, hold: window.CF.TIMING.walkHold, saved,
+      humanHold: window.CF.TIMING.humanWalkHold,
       topVal: (document.getElementById('game-speed') || {}).value
     };
   });
-  ck('★ 切换档位即时生效（引擎节奏变慢 + 三处显示同步）',
+  ck('★ 切换档位即时生效（AI 节奏变慢 + 三处显示同步）',
     changed.key === 'slow' && changed.hold > speed.hold && changed.topVal === 'slow', JSON.stringify(changed));
+  ck('★ 真人节奏完全不受 AI 档位影响',
+    changed.humanHold === speed.humanHold && changed.humanHold === 320,
+    `${speed.humanHold} → ${changed.humanHold}`);
   ck('档位已持久化（file:// 禁用存储时允许为 null）',
     changed.saved === 'slow' || changed.saved === null, String(changed.saved));
 

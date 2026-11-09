@@ -462,13 +462,24 @@
   };
 
   const SPEED_PRESETS = [
-    { key: 'slow',    label: '🐢 慢速 · 看清每一步', scale: 3.0,  note: '每格约 0.3–0.7 秒，AI 每手约 5 秒' },
-    { key: 'relaxed', label: '🚶 舒缓 · 推荐',       scale: 1.8,  note: '每格约 0.2–0.4 秒，AI 每手约 3 秒' },
-    { key: 'normal',  label: '⚡ 标准',              scale: 1.0,  note: '每格约 0.1–0.2 秒，AI 每手约 1.7 秒' },
-    { key: 'fast',    label: '🚀 极快',              scale: 0.45, note: '每格约 0.05 秒，AI 几乎瞬间走完' }
+    { key: 'slow',    label: '🤖 慢速 · 看清每一步', scale: 3.0,  note: 'AI 每格约 0.3–0.7 秒，AI 每手约 5 秒' },
+    { key: 'relaxed', label: '🤖 舒缓 · 推荐',       scale: 1.8,  note: 'AI 每格约 0.2–0.4 秒，AI 每手约 3 秒' },
+    { key: 'normal',  label: '🤖 标准',              scale: 1.0,  note: 'AI 每格约 0.1–0.2 秒，AI 每手约 1.7 秒' },
+    { key: 'fast',    label: '🤖 极快',              scale: 0.45, note: 'AI 每格约 0.05 秒，AI 几乎瞬间走完' }
   ];
   const DEFAULT_SPEED = 'relaxed';
-  const TIMING = Object.assign({}, TIMING_BASE, { speed: DEFAULT_SPEED });
+
+  /* 真人玩家节奏：与 AI 档位完全解耦的固定值，永远等于「标准」档。
+     档位只改电脑玩家的出手与走格；真人掷骰、走格、操作都不受任何影响，
+     也不会被动画拖慢（玩家自己的思考时间本来就完全自由）。
+     放在 TIMING 内部是为了让批量模拟的「把数字字段整体归零」逻辑一并覆盖它。 */
+  const HUMAN_TIMING = {
+    humanWalkHold: 320,
+    humanWalkTotal: 900,
+    humanWalkStepMin: 90,
+    humanWalkStepMax: 220
+  };
+  const TIMING = Object.assign({}, TIMING_BASE, HUMAN_TIMING, { speed: DEFAULT_SPEED });
 
   function normSpeed(k) {
     return SPEED_PRESETS.some(p => p.key === k) ? k : DEFAULT_SPEED;
@@ -595,7 +606,7 @@
     HOUSES, DOODADS, pickDoodad,
     RULES,
     TUNING, AI_POLICY, TIMING,
-    TIMING_BASE, SPEED_PRESETS, DEFAULT_SPEED, normSpeed, speedInfo, applySpeed,
+    TIMING_BASE, HUMAN_TIMING, SPEED_PRESETS, DEFAULT_SPEED, normSpeed, speedInfo, applySpeed,
     Stats
   };
 })();

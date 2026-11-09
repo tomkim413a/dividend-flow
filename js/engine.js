@@ -212,6 +212,18 @@
   /* ---------- 掷骰 / 逐格行走 ---------- */
   // 节奏/时长等表现参数集中在 CF.TIMING
   const WALK = CF.TIMING;
+  /* ★ 两套节奏彻底分离（玩家要求：AI 快慢可调，真人完全不用管）
+     · 电脑玩家 → WALK.walk* / WALK.ai*，随速度档位变化
+     · 真人玩家 → WALK.humanWalk*，固定「标准」值，档位永远不改它
+     drive() 里的 aiRollMs / aiChooseMs 本就在 p.ai 分支中，天然只作用于 AI。
+     真人的操作/思考时间从来不受任何定时器限制，这里只决定「掷骰后棋子走完」的动画。 */
+  const walkHoldFor = p => (p && p.ai ? WALK.walkHold : WALK.humanWalkHold);
+  const stepMsFor = (p, steps) => {
+    const min = p && p.ai ? WALK.walkStepMin : WALK.humanWalkStepMin;
+    const max = p && p.ai ? WALK.walkStepMax : WALK.humanWalkStepMax;
+    const total = p && p.ai ? WALK.walkTotal : WALK.humanWalkTotal;
+    return Math.max(min, Math.min(max, Math.round(total / steps)));
+  };
 
   // charityDice = 上一回合捐过款攒下的双骰额度，在【下一次轮到自己掷骰】时兑现
   function doRoll() {
@@ -234,7 +246,7 @@
     emit();
     const steps = dice.reduce((s, v) => s + v, 0);
     marketTick();               // 掷骰后全市场波动一次
-    laterFree(() => walk(p, steps), WALK.walkHold);   // 走格与讲解卡语音并行，不被教练冻结
+    laterFree(() => walk(p, steps), walkHoldFor(p));   // 走格与讲解卡语音并行，不被教练冻结
   }
 
   // 一格一格走过去：进度存进 S.walk（纯数据、可序列化）。
@@ -242,7 +254,7 @@
   // 剩余步数和落格事件永久丢失、回合卡在半路。现在改为「暂停 / 续走」。
   function walk(p, steps) {
     if (!S || S.over || !p || steps < 1) return;
-    const stepMs = Math.max(WALK.walkStepMin, Math.min(WALK.walkStepMax, Math.round(WALK.walkTotal / steps)));
+    const stepMs = stepMsFor(p, steps);   // 只在此处算一次，续走沿用 S.walk.stepMs
     S.walk = { idx: S.players.indexOf(p), left: steps, steps, stepMs };
     laterFree(tick, stepMs);
   }

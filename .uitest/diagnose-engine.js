@@ -32,6 +32,10 @@ function makeEngine(opts) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), sandbox, { filename: f });
   }
   const CF = sandbox.CF, Engine = sandbox.Engine;
+  /* 固定随机源：比较两次实验时骰子点数一致，才能只观察速度档位这一个变量 */
+  if (opts.random !== undefined) {
+    vm.runInContext('Math.random = () => ' + Number(opts.random), sandbox);
+  }
   if (opts.fast) {
     Object.keys(CF.TIMING).forEach(k => {
       if (typeof CF.TIMING[k] === 'number') CF.TIMING[k] = 0;
@@ -272,6 +276,49 @@ head('G 四档速度：档位表完整性、引擎确实读到档位、运行中
   const after = clock.now - t0;
   console.log(`  运行中从慢速切到极快后，再跑 3 手耗时 ${after} ms`);
   ck('★ 运行中改档即时生效（无需重开局）', after > 0 && after < slowMs, `${after} ms`);
+}
+
+/* ---------------- H 真人节奏与 AI 档位彻底隔离 ---------------- */
+head('H 真人玩家节奏不受 AI 速度档位影响（玩家明确要求）');
+{
+  const { CF } = makeEngine({ fast: false });
+  const keys = Object.keys(CF.HUMAN_TIMING);
+  ck('真人节奏单独成组（4 个 humanWalk* 字段）', keys.length === 4 && keys.every(k => /^humanWalk/.test(k)), keys.join(','));
+  ck('真人固定值等于「标准」档基准',
+    CF.HUMAN_TIMING.humanWalkHold === CF.TIMING_BASE.walkHold &&
+    CF.HUMAN_TIMING.humanWalkTotal === CF.TIMING_BASE.walkTotal,
+    `hold ${CF.HUMAN_TIMING.humanWalkHold} vs ${CF.TIMING_BASE.walkHold}`);
+
+  const before = keys.map(k => CF.TIMING[k]);
+  CF.applySpeed('slow');
+  const afterSlow = keys.map(k => CF.TIMING[k]);
+  CF.applySpeed('fast');
+  const afterFast = keys.map(k => CF.TIMING[k]);
+  ck('★ applySpeed 改档时绝不触碰真人节奏字段',
+    before.every((v, i) => v === afterSlow[i] && v === afterFast[i]),
+    `${before} → ${afterSlow} → ${afterFast}`);
+
+  /* 端到端量化：真人在慢速档与极快档下，掷骰停顿和逐格间隔必须完全一致 */
+  function humanWalk(speed) {
+    const e = makeEngine({ fast: false, random: 0.5 });   // 固定掷出 4 点，两次完全可比
+    e.CF.applySpeed(speed);
+    e.Engine.start(cfg(2, 0));           // P0 真人，P1 AI
+    const S = e.Engine.state();
+    S.cur = 0; S.gate = false; S.await = 'roll';
+    e.clock.timers.clear();
+    e.Engine.act.roll();
+    e.clock.step();                      // 触发 walk()，写入 S.walk
+    const w = e.Engine.state().walk;
+    return { hold: e.clock.now, stepMs: w && w.stepMs, aiHold: e.CF.TIMING.walkHold };
+  }
+  const hSlow = humanWalk('slow'), hFast = humanWalk('fast');
+  console.log(`  真人：慢速档 [停顿 ${hSlow.hold}ms / 每格 ${hSlow.stepMs}ms]，极快档 [停顿 ${hFast.hold}ms / 每格 ${hFast.stepMs}ms]`);
+  console.log(`  同期 AI 的 walkHold：${hSlow.aiHold}ms → ${hFast.aiHold}ms`);
+  ck('★ 真人掷骰后停顿不随档位变化，且等于标准值',
+    hSlow.hold === hFast.hold && hSlow.hold === CF.TIMING_BASE.walkHold, `${hSlow.hold} vs ${hFast.hold}`);
+  ck('★ 真人逐格行走间隔不随档位变化',
+    hSlow.stepMs === hFast.stepMs && hSlow.stepMs > 0, `${hSlow.stepMs} vs ${hFast.stepMs}`);
+  ck('★ 同一时刻 AI 节奏确实按档位变了', hSlow.aiHold > hFast.aiHold * 5, `${hSlow.aiHold} vs ${hFast.aiHold}`);
 }
 
 /* ---------------- F 联机状态序列化 ---------------- */

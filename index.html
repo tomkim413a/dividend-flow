@@ -33,6 +33,7 @@
   .speed-row .ol-select,.ol-row .speed-select{margin-right:0;max-width:190px}
   .speed-mini{max-width:136px;font-size:12px;padding:6px 8px;margin-right:0}
   .speed-hint{color:var(--dim);font-size:12px;line-height:1.5}
+  .speed-fixed{margin-top:0;opacity:.85}
   [data-speed-select]:disabled{opacity:.5;cursor:not-allowed}
 </style>
 </head>
@@ -67,11 +68,15 @@
         <input type="range" class="bgm-vol" min="0" max="100" step="1" value="50" title="背景音乐音量">
         <span class="hint" data-i18n="bgm_hint">背景音乐：开始界面与对局中各一首</span>
       </div>
-      <!-- AI / 动画速度：单机玩家直接在这里调，进对局后顶栏还能随时改 -->
+      <!-- 速度分两个独立单元：AI 可调，真人固定 -->
       <div class="speed-row">
-        <span class="speed-label">🐢 AI / 动画速度</span>
-        <select id="setup-speed" class="ol-select" data-speed-select title="调节 AI 行动与走格动画的快慢"></select>
+        <span class="speed-label">🤖 AI 速度</span>
+        <select id="setup-speed" class="ol-select" data-speed-select title="只调节电脑玩家的出手与走格快慢"></select>
         <span class="speed-hint" id="setup-speed-hint"></span>
+      </div>
+      <div class="speed-row speed-fixed">
+        <span class="speed-label">👤 真人回合</span>
+        <span class="speed-hint">固定标准节奏（约 1.7 秒/手），不受上方设置影响；进对局后顶栏还能随时调 AI</span>
       </div>
       <div class="start-row" id="start-row">
         <div class="start-left">
@@ -106,7 +111,7 @@
     <div class="brand"><span data-i18n="brand">股息流</span><span data-i18n="brand_sub">红利投资模拟</span></div>
     <div id="top-status">准备中…</div>
     <div class="top-actions">
-      <select id="game-speed" class="ol-select speed-mini" data-speed-select title="调节 AI / 动画速度（联机时由房间统一控制）"></select>
+      <select id="game-speed" class="ol-select speed-mini" data-speed-select title="只调 AI 速度（真人节奏固定；联机时由房间统一控制）"></select>
       <button id="btn-guide-top" class="btn ghost sm" type="button">📖 玩法</button>
       <button id="btn-log" class="btn ghost sm" type="button">📜 日志</button>
       <button class="btn ghost sm bgm-toggle" type="button" title="开关背景音乐">🎵 音乐</button>
@@ -189,10 +194,14 @@
     <h3>🏠 联机大厅</h3>
     <div class="ol-row">房间号：<b id="lobby-roomno">—</b></div>
     <div class="speed-row">
-      <span class="speed-label">🐢 AI 速度</span>
-      <select id="lobby-speed" class="ol-select speed-select" data-speed-select title="房间内 AI 与走格动画速度，开局后也能改"></select>
+      <span class="speed-label">🤖 AI 速度</span>
+      <select id="lobby-speed" class="ol-select speed-select" data-speed-select title="房间内电脑玩家的出手与走格速度，开局后也能改"></select>
     </div>
     <div class="speed-hint" id="lobby-speed-hint"></div>
+    <div class="speed-row speed-fixed">
+      <span class="speed-label">👤 真人回合</span>
+      <span class="speed-hint">固定标准节奏，不随房间 AI 档位变化</span>
+    </div>
     <ul id="lobby-seats" class="ol-seats"></ul>
     <input id="lobby-roomid" class="ol-input" type="text" placeholder="输入房间号加入" autocomplete="off">
     <div id="lobby-msg" class="ol-msg"></div>

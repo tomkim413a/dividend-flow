@@ -49,11 +49,16 @@ head('A 房间级速度：默认值 / 白名单 / 开局传入 / 运行中改档
     `speed=${g.CF.TIMING.speed} hold=${g.CF.TIMING.walkHold}`);
 
   const before = g.CF.TIMING.walkHold;
+  const humanKeys = Object.keys(g.CF.HUMAN_TIMING);
+  const humanBefore = humanKeys.map(k => g.CF.TIMING[k]);
   const set = roomMgr.setSpeed(r2.id, host.id, 'slow');
   ck('房主在对局中改档成功', !set.err && set.room.speed === 'slow', set.err || set.room.speed);
   ck('★ 改档即时作用到该房间的引擎（无需重开局）',
     g.CF.TIMING.speed === 'slow' && g.CF.TIMING.walkHold > before * 3,
     `${before} → ${g.CF.TIMING.walkHold}`);
+  ck('★ 服务端改档同样不影响真人节奏',
+    humanKeys.every((k, i) => g.CF.TIMING[k] === humanBefore[i]),
+    `${humanBefore} → ${humanKeys.map(k => g.CF.TIMING[k])}`);
 
   // 另一个房间：档位互不影响
   const r4 = roomMgr.createRoom({ id: 'spd-other', username: '别人' }, '', 'fast');
