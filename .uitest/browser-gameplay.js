@@ -34,15 +34,50 @@ function ck(name, ok, detail) {
   });
 
   await page.goto(INDEX);
+  // 清掉上一次测试可能残留的速度存档并重载，保证每次都从默认档开始
+  await page.evaluate(() => { try { localStorage.removeItem('cf_speed_v1'); } catch (e) {} });
+  await page.reload();
   await page.waitForSelector('#player-cfg .pcfg');
   ck('设置页正常加载', (await page.locator('#player-cfg .pcfg').count()) >= 2);
 
-  // 节奏参数
-  const timing = await page.evaluate(() => ({
-    hold: window.CF.TIMING.walkHold, step: window.CF.TIMING.walkStepMax,
-    ai: window.CF.TIMING.aiRollMs
+  // 速度档位：默认「舒缓」，三个界面各有一个下拉，切换后即时生效
+  const speed = await page.evaluate(() => ({
+    key: window.CF.TIMING.speed,
+    hold: window.CF.TIMING.walkHold,
+    presets: window.CF.SPEED_PRESETS.map(p => p.key),
+    selects: document.querySelectorAll('[data-speed-select]').length,
+    setupVal: (document.getElementById('setup-speed') || {}).value,
+    topVal: (document.getElementById('game-speed') || {}).value,
+    lobbyVal: (document.getElementById('lobby-speed') || {}).value,
+    hint: (document.getElementById('setup-speed-hint') || {}).textContent
   }));
-  ck('节奏参数已压缩（walkHold < 500ms）', timing.hold < 500, JSON.stringify(timing));
+  ck('默认「舒缓」档、四档齐全', speed.key === 'relaxed' && speed.presets.length === 4, JSON.stringify(speed));
+  ck('开始页 / 顶栏 / 联机大厅三处下拉都已填充且同步',
+    speed.selects === 3 && speed.setupVal === speed.key && speed.topVal === speed.key && speed.lobbyVal === speed.key,
+    JSON.stringify(speed));
+  ck('档位说明已显示', /每格|AI 每手/.test(speed.hint || ''), speed.hint);
+
+  const changed = await page.evaluate(() => {
+    const sel = document.getElementById('setup-speed');
+    sel.value = 'slow';
+    sel.dispatchEvent(new Event('change'));
+    let saved = null;
+    try { saved = localStorage.getItem('cf_speed_v1'); } catch (e) { /* file:// 可能禁用存储 */ }
+    return {
+      key: window.CF.TIMING.speed, hold: window.CF.TIMING.walkHold, saved,
+      topVal: (document.getElementById('game-speed') || {}).value
+    };
+  });
+  ck('★ 切换档位即时生效（引擎节奏变慢 + 三处显示同步）',
+    changed.key === 'slow' && changed.hold > speed.hold && changed.topVal === 'slow', JSON.stringify(changed));
+  ck('档位已持久化（file:// 禁用存储时允许为 null）',
+    changed.saved === 'slow' || changed.saved === null, String(changed.saved));
+
+  // 单手耗时测试固定用「标准」档，避免被慢速档拉长
+  await page.evaluate(() => {
+    const sel = document.getElementById('setup-speed');
+    sel.value = 'normal'; sel.dispatchEvent(new Event('change'));
+  });
 
   await page.click('#btn-start');
   await page.waitForTimeout(500);

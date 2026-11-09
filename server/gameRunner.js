@@ -32,9 +32,13 @@ function snapshot(S) {
  * @param {Array} seats 座位 [{ userId, name, ai }]
  * @param {Function} onState 状态变化回调 (state)
  * @param {Function} onOver  对局结束回调 (state)
+ * @param {object} [opts] opts.speed 房间速度档位（缺省用 CF.DEFAULT_SPEED）
  */
-function createGame(seats, onState, onOver) {
+function createGame(seats, onState, onOver, opts) {
   const { CF, Engine, takeSfx } = createEngineContext();
+  /* 每个房间一份 vm 上下文，CF.TIMING 互不共享：这里只影响本房间。
+     必须在 Engine.start 之前设置，首手就按房主选的节奏跑。 */
+  CF.applySpeed((opts && opts.speed) || CF.DEFAULT_SPEED);
   const cfg = buildCfg(CF, seats);
 
   let ended = false;
@@ -61,6 +65,8 @@ function createGame(seats, onState, onOver) {
   return {
     CF,
     Engine,
+    /** 对局中改速度：引擎持有 CF.TIMING 引用，改属性后下一手立即按新节奏走 */
+    setSpeed: k => CF.applySpeed(k),
     state: () => { const S = Engine.state(); return S ? snapshot(S) : null; },
     isOver: () => !!(Engine.state() && Engine.state().over)
   };

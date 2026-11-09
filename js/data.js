@@ -448,8 +448,11 @@
   //    因此调整这些数值【不会】改变胜率 / 回合数 / 经济数值。
   // 2026-11-09 卡顿优化：旧值（1200/2000/160~600/900/700）实测零网络下
   //    平均每手要空等约 3.9~4.2 秒、4 人一圈近 16 秒，玩家会误以为「卡死」。
-  //    压缩后约 1.7~1.9 秒/手，走格仍逐格可见，但不再长时间无反馈。
-  const TIMING = {
+  // 2026-11-09 二次调整：压到「标准」档后玩家反馈 AI 一瞬间走完、看不清每一步，
+  //    因此改为四档可选，默认「舒缓」（比标准慢 1.8 倍，仍远快于旧版）。
+  //    engine.js 持有 TIMING 的对象引用，改属性即时生效；服务端每个房间各有
+  //    一份 vm 上下文，applySpeed 只影响该房间，不会串到其他对局。
+  const TIMING_BASE = {
     walkHold: 320,    // 掷骰后停顿（ms），再开始逐格行走
     walkTotal: 900,   // 单次掷骰走完全程的基准时长（ms）
     walkStepMin: 90,  // 单步最小停留（ms）
@@ -457,6 +460,33 @@
     aiRollMs: 320,    // AI 掷骰前的“思考”时长（ms）
     aiChooseMs: 260   // AI 翻卡做决策的延迟（ms）
   };
+
+  const SPEED_PRESETS = [
+    { key: 'slow',    label: '🐢 慢速 · 看清每一步', scale: 3.0,  note: '每格约 0.3–0.7 秒，AI 每手约 5 秒' },
+    { key: 'relaxed', label: '🚶 舒缓 · 推荐',       scale: 1.8,  note: '每格约 0.2–0.4 秒，AI 每手约 3 秒' },
+    { key: 'normal',  label: '⚡ 标准',              scale: 1.0,  note: '每格约 0.1–0.2 秒，AI 每手约 1.7 秒' },
+    { key: 'fast',    label: '🚀 极快',              scale: 0.45, note: '每格约 0.05 秒，AI 几乎瞬间走完' }
+  ];
+  const DEFAULT_SPEED = 'relaxed';
+  const TIMING = Object.assign({}, TIMING_BASE, { speed: DEFAULT_SPEED });
+
+  function normSpeed(k) {
+    return SPEED_PRESETS.some(p => p.key === k) ? k : DEFAULT_SPEED;
+  }
+  function speedInfo(k) {
+    return SPEED_PRESETS.find(p => p.key === normSpeed(k));
+  }
+  /** 应用速度档位：只改 TIMING 的数值属性（speed 是字符串标记，供 UI/诊断读取）。
+   *  引擎与服务端 vm 都持有同一对象引用，因此运行中调整下一手立即生效。 */
+  function applySpeed(k) {
+    const p = speedInfo(k);
+    Object.keys(TIMING_BASE).forEach(f => {
+      TIMING[f] = Math.max(40, Math.round(TIMING_BASE[f] * p.scale));
+    });
+    TIMING.speed = p.key;
+    return p.key;
+  }
+  applySpeed(DEFAULT_SPEED);
 
   /* ============================================================
    * 9. 战绩存档 Stats —— 跨局累计（localStorage 持久化）
@@ -565,6 +595,7 @@
     HOUSES, DOODADS, pickDoodad,
     RULES,
     TUNING, AI_POLICY, TIMING,
+    TIMING_BASE, SPEED_PRESETS, DEFAULT_SPEED, normSpeed, speedInfo, applySpeed,
     Stats
   };
 })();

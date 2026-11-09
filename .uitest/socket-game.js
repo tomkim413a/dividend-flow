@@ -39,8 +39,11 @@ async function api(p, body) {
   await new Promise((res, rej) => { s.on('connect', res); s.on('connect_error', rej); });
   ck('Socket.IO 握手成功', true);
 
-  let myIdx = -1, actedTurn = -1, actedPending = '';
-  s.on(SC.ROOM, r => { if (r && r.seats) myIdx = r.seats.findIndex(x => x.name === u); });
+  let myIdx = -1, actedTurn = -1, actedPending = '', roomSpeed = '';
+  s.on(SC.ROOM, r => {
+    if (r && r.seats) myIdx = r.seats.findIndex(x => x.name === u);
+    if (r && r.speed) roomSpeed = r.speed;
+  });
   s.on(SC.ERROR, e => stats.errs.push(e && e.msg));
   s.on(SC.GAME_OVER, () => { stats.over = true; });
   s.on(SC.STATE, st => {
@@ -67,8 +70,10 @@ async function api(p, body) {
     }
   });
 
-  s.emit(CS.CREATE_ROOM);
+  // 长跑固定用「标准」档：默认「舒缓」会把 16 秒内的手数压低，影响推进断言
+  s.emit(CS.CREATE_ROOM, { speed: 'normal' });
   await wait(400);
+  ck('建房时指定的速度档位被服务端确认', roomSpeed === 'normal', 'speed=' + roomSpeed);
   s.emit(CS.START_GAME);
   await wait(RUN_MS);
 

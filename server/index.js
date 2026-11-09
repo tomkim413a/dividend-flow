@@ -257,6 +257,7 @@ function roomInfo(room) {
     id: room.id,
     hostId: room.hostId,
     started: !!room.started,
+    speed: room.speed || roomMgr.DEFAULT_SPEED,   // 房间统一的 AI / 动画档位
     seats: room.seats.map(s => ({ userId: s.userId, name: s.name, ai: !!s.ai, prof: s.prof || '' }))
   };
 }
@@ -270,7 +271,7 @@ function currentRoomId(socket) {
 io.on('connection', socket => {
   /* 建房 */
   socket.on(CS.CREATE_ROOM, (data = {}) => {
-    const room = roomMgr.createRoom(socket.user, data.prof);
+    const room = roomMgr.createRoom(socket.user, data.prof, data.speed);
     socket.join(room.id);
     socket.emit(SC.ROOM, roomInfo(room));
   });
@@ -298,6 +299,15 @@ io.on('connection', socket => {
     if (!roomId) return;
     const room = roomMgr.setProf(roomId, socket.user.id, d.prof);
     if (room) io.to(roomId).emit(SC.ROOM, roomInfo(room));
+  });
+
+  /* 房间速度：开局前人人可设，对局中仅房主可改；服务端权威，改完广播给全房 */
+  socket.on(CS.SET_SPEED, (d = {}) => {
+    const roomId = currentRoomId(socket);
+    if (!roomId) return socket.emit(SC.ERROR, { msg: '请先建房或加入房间' });
+    const r = roomMgr.setSpeed(roomId, socket.user.id, d.speed);
+    if (r.err) return socket.emit(SC.ERROR, { msg: r.err });
+    io.to(roomId).emit(SC.ROOM, roomInfo(r.room));
   });
 
   /* 开局（仅房主） */

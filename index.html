@@ -27,6 +27,13 @@
   .ol-seats{list-style:none;padding:0;margin:8px 0;max-height:150px;overflow:auto}
   .ol-seats li{padding:6px 10px;border-radius:6px;background:#1b2637;margin-bottom:4px;font-size:14px}
   .ol-row{margin:6px 0;font-size:14px}
+  /* AI / 动画速度档位：开始界面、游戏顶栏、联机大厅共用一套控件 */
+  .speed-row{display:flex;align-items:center;gap:10px;margin:10px 0 4px;flex-wrap:wrap}
+  .speed-label{font-size:13px;font-weight:700;white-space:nowrap}
+  .speed-row .ol-select,.ol-row .speed-select{margin-right:0;max-width:190px}
+  .speed-mini{max-width:136px;font-size:12px;padding:6px 8px;margin-right:0}
+  .speed-hint{color:var(--dim);font-size:12px;line-height:1.5}
+  [data-speed-select]:disabled{opacity:.5;cursor:not-allowed}
 </style>
 </head>
 <body>
@@ -59,6 +66,12 @@
         <button class="btn sm ghost bgm-toggle" type="button" title="开关背景音乐">🎵 音乐</button>
         <input type="range" class="bgm-vol" min="0" max="100" step="1" value="50" title="背景音乐音量">
         <span class="hint" data-i18n="bgm_hint">背景音乐：开始界面与对局中各一首</span>
+      </div>
+      <!-- AI / 动画速度：单机玩家直接在这里调，进对局后顶栏还能随时改 -->
+      <div class="speed-row">
+        <span class="speed-label">🐢 AI / 动画速度</span>
+        <select id="setup-speed" class="ol-select" data-speed-select title="调节 AI 行动与走格动画的快慢"></select>
+        <span class="speed-hint" id="setup-speed-hint"></span>
       </div>
       <div class="start-row" id="start-row">
         <div class="start-left">
@@ -93,6 +106,7 @@
     <div class="brand"><span data-i18n="brand">股息流</span><span data-i18n="brand_sub">红利投资模拟</span></div>
     <div id="top-status">准备中…</div>
     <div class="top-actions">
+      <select id="game-speed" class="ol-select speed-mini" data-speed-select title="调节 AI / 动画速度（联机时由房间统一控制）"></select>
       <button id="btn-guide-top" class="btn ghost sm" type="button">📖 玩法</button>
       <button id="btn-log" class="btn ghost sm" type="button">📜 日志</button>
       <button class="btn ghost sm bgm-toggle" type="button" title="开关背景音乐">🎵 音乐</button>
@@ -174,6 +188,11 @@
   <div class="mback"><div class="mcard" style="max-width:420px">
     <h3>🏠 联机大厅</h3>
     <div class="ol-row">房间号：<b id="lobby-roomno">—</b></div>
+    <div class="speed-row">
+      <span class="speed-label">🐢 AI 速度</span>
+      <select id="lobby-speed" class="ol-select speed-select" data-speed-select title="房间内 AI 与走格动画速度，开局后也能改"></select>
+    </div>
+    <div class="speed-hint" id="lobby-speed-hint"></div>
     <ul id="lobby-seats" class="ol-seats"></ul>
     <input id="lobby-roomid" class="ol-input" type="text" placeholder="输入房间号加入" autocomplete="off">
     <div id="lobby-msg" class="ol-msg"></div>
@@ -204,11 +223,12 @@
 <div id="coachbox" class="hidden"></div>
 
 <!-- ?v= 版本号：部署后浏览器立即拉新脚本，不用手动清缓存 -->
-<script src="js/data.js?v=20261108e"></script>
-<script src="js/engine.js?v=20261108e"></script>
-<script src="js/bgm.js?v=20261108e"></script>
-<script src="js/sfx.js?v=20261108e"></script>
-<script src="js/render.js?v=20261108e"></script>
-<script src="js/online.js?v=20261108e"></script>
+<script src="js/data.js?v=20261108f"></script>
+<script src="js/engine.js?v=20261108f"></script>
+<script src="js/bgm.js?v=20261108f"></script>
+<script src="js/sfx.js?v=20261108f"></script>
+<script src="js/render.js?v=20261108f"></script>
+<script src="js/online.js?v=20261108f"></script>
+<script src="js/speed.js?v=20261108f"></script>
 </body>
 </html>

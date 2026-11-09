@@ -91,7 +91,7 @@
   /* ---------------- 联机组件：后台顺序加载 ----------------
      顺序加载最稳：protocol.js → socket.io → net.js，后者依赖前者的 CS/SC/io。
      全程后台、失败可重试，不再阻塞登录框，也不再弹「加载超时」alert。 */
-  const SCRIPTS = ['/protocol.js', '/socket.io/socket.io.js', 'js/net.js?v=20261108e'];
+  const SCRIPTS = ['/protocol.js', '/socket.io/socket.io.js', 'js/net.js?v=20261108f'];
   let scriptsPromise = null;
   function loadScripts() {
     if (scriptsPromise) return scriptsPromise;
@@ -332,6 +332,27 @@
     lobbyMsg('⏳ 正在连接房间服务…');
     setLobbyBusy(true);
 
+    /* 房间速度：联机由服务端权威引擎决定，客户端只发指令 + 同步显示。
+       setHandler 让三个速度下拉（开始界面 / 顶栏 / 大厅）统一走网络分支。 */
+    if (window.SpeedUI) {
+      SpeedUI.disable(['lobby-speed', 'game-speed'], false);
+      SpeedUI.setHandler(key => {
+        const sock = window.NET;
+        // protocol.js 是后台加载的，大厅刚弹出时 CS 可能还没就绪 → 用字面量兜底
+        const type = (window.CS && CS.SET_SPEED) || 'cs:setSpeed';
+        if (!sock || !sock.on) {
+          SpeedUI.rollback();
+          lobbyMsg('⏳ 房间服务连接中，连上后再调速度');
+          return;
+        }
+        SpeedUI.applyLocal(key, false);       // 乐观更新（不写本机存档），等广播校准
+        if (!sock.send(type, { speed: key })) {
+          SpeedUI.rollback();
+          lobbyMsg('⚠️ 网络不稳，速度未改，请稍后重试');
+        }
+      });
+    }
+
     // 职业下拉：随机 + 全部职业（只依赖 data.js，不依赖联机脚本）
     const profSel = el('lobby-prof');
     if (profSel && window.CF && CF.PROFESSIONS) {
@@ -346,6 +367,11 @@
       netPromise = null;
       enteredGame = false;
       netToast('');
+      // 回到单机：清掉联机 handler、恢复玩家自己的单机档位
+      if (window.SpeedUI) {
+        SpeedUI.restoreLocal();
+        SpeedUI.disable(['lobby-speed', 'game-speed'], false);
+      }
     };
     const retry = el('lobby-retry');
     if (retry) retry.onclick = () => {
@@ -404,7 +430,14 @@
           `${pr ? ` <small>${pr.icon} ${pr.name}</small>` : ''}</li>`;
       }).join('');
       const start = el('lobby-start');
-      if (start) start.disabled = !(currentUser && r.hostId === currentUser.id);
+      const isHost = !!(currentUser && r.hostId === currentUser.id);
+      if (start) start.disabled = !isHost;
+      // 房间速度以服务端为准：广播回来后校准三个下拉，避免各客户端显示不一致
+      if (window.SpeedUI) {
+        if (r.speed) SpeedUI.syncFromServer(r.speed);
+        // 对局中仅房主可调；未开局时房间内人人可设
+        SpeedUI.disable(['lobby-speed', 'game-speed'], !!r.started && !isHost);
+      }
       lobbyMsg('');
     });
 
@@ -473,7 +506,10 @@
       try { sessionStorage.setItem('cf_online_prof', profSel.value); } catch (e) {}
       NET.send(CS.SET_PROF, { prof: profSel.value });
     };
-    el('lobby-create').onclick = () => NET.send(CS.CREATE_ROOM, { prof: profVal() });
+    el('lobby-create').onclick = () => NET.send(CS.CREATE_ROOM, {
+      prof: profVal(),
+      speed: window.SpeedUI ? SpeedUI.current() : undefined   // 建房时把当前档位带上去
+    });
     el('lobby-join').onclick = () => {
       const id = String((el('lobby-roomid').value || '')).trim().toUpperCase();
       if (!id) { lobbyMsg('请输入房间号'); return; }

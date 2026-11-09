@@ -1845,7 +1845,9 @@
     COACH.on = true; COACH.intro = true; COACH.card = null; COACH.next = null; COACH.busy = false; COACH.hold = false;
     // 演示节奏由“讲解卡（语音）读完才放行”主导（见 coachShow/Engine._coachGate），
     // 这里只保留极短的衔接过渡，避免读完卡后干等太久。
-    COACH.timing = { aiRollMs: CF.TIMING.aiRollMs, aiChooseMs: CF.TIMING.aiChooseMs };
+    // 只记档位标记：教学期间玩家可能在顶栏改速度，结束时用整档恢复，
+    // 避免把两个节奏字段单独写回、造成 TIMING.speed 与实际数值不一致。
+    COACH.timing = { speed: CF.TIMING.speed };
     CF.TIMING.aiRollMs = 250;       // 读完讲解到“掷骰”的微小过渡
     CF.TIMING.aiChooseMs = 300;     // 读完讲解到“AI 决策”的微小过渡
     launch(collectSetup());
@@ -1858,7 +1860,11 @@
     clearTimeout(COACH.timer);
     COACH.card = null; COACH.next = null; COACH.busy = false; COACH.hold = false;
     coachClearHl();
-    if (COACH.timing) { CF.TIMING.aiRollMs = COACH.timing.aiRollMs; CF.TIMING.aiChooseMs = COACH.timing.aiChooseMs; COACH.timing = null; }
+    if (COACH.timing) {
+      // 以当前档位为准（玩家在教学中改过就保留新档），整档重算两个过渡字段
+      CF.applySpeed(CF.TIMING.speed || COACH.timing.speed);
+      COACH.timing = null;
+    }
     Engine.gate(false);
     if (Engine.coachRelease) Engine.coachRelease();   // 解冻引擎：释放被讲解卡挂起的定时器
     renderCoachBox();

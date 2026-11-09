@@ -8,10 +8,15 @@ const { createEngineContext } = require('./engineHost');
 const MAX_SEATS = 4;
 const rooms = new Map();          // roomId -> room
 
-/* 合法职业白名单：直接取自 data.js，避免客户端乱传职业 id */
+/* 合法职业 / 速度白名单：直接取自 data.js，避免客户端乱传 id */
 let PROF_IDS = [];
+let DEFAULT_SPEED = 'relaxed';
+let normSpeed = () => DEFAULT_SPEED;
 try {
-  PROF_IDS = createEngineContext({ fast: true }).CF.PROFESSIONS.map(p => p.id);
+  const ctx = createEngineContext({ fast: true }).CF;
+  PROF_IDS = ctx.PROFESSIONS.map(p => p.id);
+  DEFAULT_SPEED = ctx.DEFAULT_SPEED || 'relaxed';
+  normSpeed = ctx.normSpeed || normSpeed;
 } catch (e) {
   console.warn('[room] 职业列表加载失败，将按序号兜底：', e.message);
 }
@@ -29,13 +34,14 @@ function genRoomId() {
   return id;
 }
 
-function createRoom(hostUser, prof) {
+function createRoom(hostUser, prof, speed) {
   const id = genRoomId();
   const room = {
     id,
     hostId: hostUser.id,
     // 没选职业 → 随机分配，避免"随机"实际固定成第一个职业
     seats: [{ userId: hostUser.id, name: hostUser.username, ai: false, prof: normProf(prof) || randomProf() }],
+    speed: normSpeed(speed),        // 房间级 AI / 动画节奏，开局时传给该房间的引擎
     game: null,
     started: false
   };
@@ -67,6 +73,18 @@ function setProf(roomId, userId, prof) {
   if (!seat) return null;
   seat.prof = normProf(prof) || randomProf();
   return room;
+}
+
+/** 调整房间速度：开局前人人可设；对局中仅房主可改（避免多人同时拖动互相覆盖）。
+ *  即时生效——引擎持有 CF.TIMING 的对象引用，改属性后下一手就按新节奏走。 */
+function setSpeed(roomId, userId, speed) {
+  const room = rooms.get(String(roomId || '').toUpperCase());
+  if (!room) return { err: '房间不存在' };
+  if (room.started && room.hostId !== userId) return { err: '对局中仅房主可调整速度' };
+  const key = normSpeed(speed);
+  room.speed = key;
+  if (room.game && room.game.setSpeed) room.game.setSpeed(key);
+  return { room };
 }
 
 function leaveRoom(roomId, userId) {
@@ -108,7 +126,7 @@ function startGame(roomId, onState, onOver) {
   }
   room.seats = seats;
   room.started = true;
-  room.game = createGame(seats, onState, onOver);
+  room.game = createGame(seats, onState, onOver, { speed: normSpeed(room.speed) });
   return { room };
 }
 
@@ -129,4 +147,4 @@ function resume(roomId, userId) {
   return { room, seatIndex: idx };
 }
 
-module.exports = { rooms, MAX_SEATS, createRoom, joinRoom, setProf, leaveRoom, startGame, resume };
+module.exports = { rooms, MAX_SEATS, createRoom, joinRoom, setProf, setSpeed, leaveRoom, startGame, resume, DEFAULT_SPEED };

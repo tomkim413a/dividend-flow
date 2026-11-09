@@ -106,24 +106,30 @@ head('A 全 AI 批量对局（fast: TIMING=0，虚拟时钟推进到结束）');
  * ------------------------------------------------------------------ */
 head('B 走格途中触发「破产变卖」弹窗（真人）');
 {
-  const { Engine, CF, clock } = makeEngine({ fast: false });
-  Engine.start(cfg(2, 0));               // P0 真人，P1 AI
-  const S = Engine.state();
-  // 把棋子放到最后一格，掷骰第一步必过 0 → bankSettle；给足持仓保证变卖后不出局
-  S.cur = 0;
-  const p = S.players[0];
-  const sym = S.market[0].sym;
-  p.hamsterPos = CF.HAMSTER_SIZE - 1;
-  p.cash = -20000;
-  // div=0：避免「被动收入 > 支出」当场胜出干扰走格续走的观察
-  p.stocks = [{ uid: 'x', sym, name: S.market[0].name, icon: '', cat: 'div', shares: 1000, avg: 1, div: 0 }];
-  S.await = 'roll';
-  S.gate = false;
-  clock.timers.clear();                  // 清掉 start 遗留的 AI 调度
-
-  const before = p.hamsterPos;
-  Engine.act.roll();
-  const steps = S.dice.reduce((a, b) => a + b, 0);
+  /* 必须掷出 ≥2 步：只掷 1 点时第一步就到 0 并弹窗，本来就没有「剩余步数」
+     可保留，旧版重跑会偶发假 FAIL。重掷直到构造出有效的中断场景。 */
+  let ctx, S, p, sym, before, steps = 0;
+  for (let attempt = 0; attempt < 20 && steps < 2; attempt++) {
+    ctx = makeEngine({ fast: false });
+    const { Engine: E, CF: C, clock: K } = ctx;
+    E.start(cfg(2, 0));                 // P0 真人，P1 AI
+    S = E.state();
+    // 把棋子放到最后一格，掷骰第一步必过 0 → bankSettle；给足持仓保证变卖后不出局
+    S.cur = 0;
+    p = S.players[0];
+    sym = S.market[0].sym;
+    p.hamsterPos = C.HAMSTER_SIZE - 1;
+    p.cash = -20000;
+    // div=0：避免「被动收入 > 支出」当场胜出干扰走格续走的观察
+    p.stocks = [{ uid: 'x', sym, name: S.market[0].name, icon: '', cat: 'div', shares: 1000, avg: 1, div: 0 }];
+    S.await = 'roll';
+    S.gate = false;
+    K.timers.clear();                   // 清掉 start 遗留的 AI 调度
+    before = p.hamsterPos;
+    E.act.roll();
+    steps = S.dice.reduce((a, b) => a + b, 0);
+  }
+  const { Engine, CF, clock } = ctx;
   clock.advance(5000);
   const S2 = Engine.state();
   console.log(`  掷出 ${steps} 步；弹窗时 hamsterPos=${S2.players[0].hamsterPos}, await=${S2.await}, pending=${S2.pending && S2.pending.type}`);
@@ -197,10 +203,11 @@ head('D 单次掷骰的 emit 次数（联机每 emit = 一次全状态广播 + �
   ck('单次掷骰会产生 ≥ steps 次状态广播', clock.emits >= steps, `${clock.emits} 次`);
 }
 
-/* ---------------- E 固定等待耗时 ---------------- */
-head('E 真实 TIMING 下，一轮 4 人回合的「纯代码等待」时长（零网络）');
+/* ---------------- E 固定等待耗时（显式指定标准档，避免受默认档位影响） ---------------- */
+head('E 「标准」档下，一轮 4 人回合的「纯代码等待」时长（零网络）');
 {
-  const { Engine, clock } = makeEngine({ fast: false });
+  const { Engine, CF, clock } = makeEngine({ fast: false });
+  CF.applySpeed('normal');           // 固定基准档，测量结果才可跨版本比较
   Engine.start(cfg(4, -1));
   let guard = 0;
   while (Engine.state().turn < 8 && guard++ < 5000) {
@@ -213,7 +220,58 @@ head('E 真实 TIMING 下，一轮 4 人回合的「纯代码等待」时长（�
   const per = Math.round(ms / Math.max(1, S.turn));
   console.log(`  ⇒ 平均每手 ${per} ms 纯等待（修复前基线：3941~4249 ms/手）`);
   // 随机格子会额外产生决策弹窗等待，留一定余量；基线 3941~4249 ms/手，阈值取其一半以下
-  ck('★ 节奏优化后单手纯等待 < 2.8 秒', per < 2800, `${per} ms/手`);
+  ck('★ 节奏优化后单手纯等待 < 2.2 秒', per < 2200, `${per} ms/手`);
+}
+
+/* ---------------- G 速度档位与运行中切换 ---------------- */
+head('G 四档速度：档位表完整性、引擎确实读到档位、运行中改档即时生效');
+{
+  const { Engine, CF, clock } = makeEngine({ fast: false });
+  const rows = CF.SPEED_PRESETS.map(p => {
+    CF.applySpeed(p.key);
+    return `${p.key}:hold=${CF.TIMING.walkHold},step=${CF.TIMING.walkStepMax},ai=${CF.TIMING.aiRollMs}`;
+  });
+  rows.forEach(r => console.log('  ' + r));
+
+  ck('默认档位是「舒缓」（比标准慢，AI 每一步看得清）', CF.DEFAULT_SPEED === 'relaxed');
+  ck('共 4 档且倍率严格递减',
+    CF.SPEED_PRESETS.length === 4 &&
+    CF.SPEED_PRESETS.every((p, i, a) => i === 0 || p.scale < a[i - 1].scale));
+  ck('未知档位安全回落到默认档', CF.normSpeed('not-a-speed') === CF.DEFAULT_SPEED);
+
+  const holdOf = k => { CF.applySpeed(k); return CF.TIMING.walkHold; };
+  ck('★ 慢速档比极快档慢 5 倍以上',
+    holdOf('slow') > holdOf('fast') * 5, `${holdOf('slow')} vs ${holdOf('fast')}`);
+  ck('档位只改表现层数值，不碰规则参数（TUNING 未变）',
+    typeof CF.TUNING === 'object' && CF.TIMING.speed === 'fast');
+
+  /* 引擎持有 CF.TIMING 的对象引用：同一起始状态下，慢速档耗时必须显著更长 */
+  function runHands(speed, hands) {
+    const e = makeEngine({ fast: false });
+    e.CF.applySpeed(speed);
+    e.Engine.start(cfg(4, -1));
+    let guard = 0;
+    while (e.Engine.state().turn < hands && guard++ < 4000) {
+      if (!e.clock.timers.size) break;
+      e.clock.step();
+    }
+    return e.clock.now;
+  }
+  const slowMs = runHands('slow', 3), fastMs = runHands('fast', 3);
+  console.log(`  同样跑 3 手：慢速 ${slowMs} ms / 极快 ${fastMs} ms`);
+  ck('★ 引擎实际按档位节奏推进（慢速 > 极快 ×2）', slowMs > fastMs * 2, `${slowMs} vs ${fastMs}`);
+
+  /* 运行中切档：不重开局，后续定时器也要按新节奏 */
+  CF.applySpeed('slow');
+  Engine.start(cfg(4, -1));
+  let g2 = 0;
+  while (Engine.state().turn < 2 && g2++ < 2000) { if (!clock.timers.size) break; clock.step(); }
+  const t0 = clock.now;
+  CF.applySpeed('fast');
+  while (Engine.state().turn < 5 && g2++ < 4000) { if (!clock.timers.size) break; clock.step(); }
+  const after = clock.now - t0;
+  console.log(`  运行中从慢速切到极快后，再跑 3 手耗时 ${after} ms`);
+  ck('★ 运行中改档即时生效（无需重开局）', after > 0 && after < slowMs, `${after} ms`);
 }
 
 /* ---------------- F 联机状态序列化 ---------------- */
