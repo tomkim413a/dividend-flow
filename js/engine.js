@@ -214,7 +214,7 @@
   const WALK = CF.TIMING;
   /* ★ 两套节奏彻底分离（玩家要求：AI 快慢可调，真人完全不用管）
      · 电脑玩家 → WALK.walk* / WALK.ai*，随速度档位变化
-     · 真人玩家 → WALK.humanWalk*，固定「标准」值，档位永远不改它
+     · 真人玩家 → WALK.humanWalk*，固定基准值，档位永远不改它
      drive() 里的 aiRollMs / aiChooseMs 本就在 p.ai 分支中，天然只作用于 AI。
      真人的操作/思考时间从来不受任何定时器限制，这里只决定「掷骰后棋子走完」的动画。 */
   const walkHoldFor = p => (p && p.ai ? WALK.walkHold : WALK.humanWalkHold);

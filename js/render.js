@@ -1930,15 +1930,31 @@
 
   /* ================= 联机模式对外接口（供 js/online.js 调用） =================
      联机时客户端不跑规则：状态由服务端权威下发，这里只负责注入 + 刷新画面。 */
-  /* 同一帧内连续到达的状态包合并成一次渲染：服务端每走一格广播一次，
-     重连补包时十几个 STATE 会挤在一起，逐包全量重绘 12 个区域会阻塞主线程。 */
-  let rafPending = false;
-  function scheduleRender() {
-    if (rafPending) return;
-    rafPending = true;
-    const go = () => { rafPending = false; render(); };
-    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(go);
-    else setTimeout(go, 16);
+  /* 联机状态包按到达顺序逐帧渲染。
+     服务端每走一格广播一次 STATE，跨境 RTT 抖动时两三个包会挤进同一帧。
+     旧实现用 rAF 把同帧的所有包合并成一次 render，只画最后一个状态，
+     中间的格子被吞掉 —— 玩家看到的就是「棋子跳格」（线上实测 25 秒内
+     出现 3 次同帧双走格包，服务端 left 从未跳跃，问题只在客户端渲染）。
+     现在每个状态排进队列、每帧渲染一个，保证每一格至少被画出一帧；
+     队列上限防止重连补包时十几个状态长时间占住主线程。 */
+  const stateQueue = [];
+  let queuePlaying = false;
+  const MAX_STATE_QUEUE = 16;
+  const nextFrame = fn => {
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(fn);
+    else setTimeout(fn, 16);
+  };
+  function drainStateQueue() {
+    const st = stateQueue.shift();
+    if (st) { Engine.hydrate(st); render(); }
+    if (stateQueue.length) nextFrame(drainStateQueue);
+    else queuePlaying = false;
+  }
+  function enqueueState(st) {
+    stateQueue.push(st);
+    // 极端积压（重连一次性补十几个包）：只保留最新的，避免画面长时间滞后
+    if (stateQueue.length > MAX_STATE_QUEUE) stateQueue.splice(0, stateQueue.length - 1);
+    if (!queuePlaying) { queuePlaying = true; nextFrame(drainStateQueue); }
   }
   window.ONLINE_HOOKS = {
     // 进入对局画面（隐藏开始界面 / 显示游戏界面 / 切对局 BGM）
@@ -1966,8 +1982,8 @@
           window.setTimeout(fn, k === 'step' ? i * 80 : 0);
         });
       }
-      Engine.hydrate(st);
-      scheduleRender();
+      // 不做同帧合并：按到达顺序逐帧渲染，走格的每一格都至少被画出一帧
+      enqueueState(st);
     },
     // 对局结束
     over: function (info) {

@@ -70,10 +70,10 @@ async function api(p, body) {
     }
   });
 
-  // 长跑固定用「标准」档：默认「舒缓」会把 16 秒内的手数压低，影响推进断言
-  s.emit(CS.CREATE_ROOM, { speed: 'normal' });
+  // 长跑固定用「快速」档，避免被慢速档拉长影响推进断言
+  s.emit(CS.CREATE_ROOM, { speed: 'relaxed' });
   await wait(400);
-  ck('建房时指定的速度档位被服务端确认', roomSpeed === 'normal', 'speed=' + roomSpeed);
+  ck('建房时指定的速度档位被服务端确认', roomSpeed === 'relaxed', 'speed=' + roomSpeed);
   s.emit(CS.START_GAME);
   await wait(RUN_MS);
 

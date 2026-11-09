@@ -60,8 +60,8 @@ const change = (key, idx) => { selects[idx].value = key; selects[idx].fire('chan
 
 console.log('\n===== A 初始化与单机模式 =====');
 ck('SpeedUI 模块已导出', !!S && !!CF.applySpeed);
-ck('默认档位「舒缓」', CF.TIMING.speed === 'relaxed' && S.current() === 'relaxed', CF.TIMING.speed);
-ck('三个下拉都填充了 4 档', selects.every(s => s.options.length === 4), selects.map(s => s.options.length).join(','));
+ck('默认档位「快速」', CF.TIMING.speed === 'relaxed' && S.current() === 'relaxed', CF.TIMING.speed);
+ck('三个下拉都填充了 2 档', selects.every(s => s.options.length === 2), selects.map(s => s.options.length).join(','));
 ck('三个下拉初始值同步', vals() === 'relaxed,relaxed,relaxed', vals());
 ck('三处提示文案已填充', hints.every(h => /每格|AI 每手/.test(h.textContent)), hints[0].textContent);
 
@@ -72,25 +72,25 @@ ck('★ 单机切换立即改变引擎节奏', CF.TIMING.speed === 'slow' && CF.
 ck('★ 三个界面同步为新档位', vals() === 'slow,slow,slow', vals());
 ck('档位写入 localStorage', localStorage.getItem('cf_speed_v1') === 'slow', localStorage.getItem('cf_speed_v1'));
 
-change('normal', 2);          // 顶栏换档同样生效
-ck('顶栏下拉也能改档并持久化', CF.TIMING.speed === 'normal' && localStorage.getItem('cf_speed_v1') === 'normal', vals());
+change('relaxed', 2);         // 顶栏换档同样生效
+ck('顶栏下拉也能改档并持久化', CF.TIMING.speed === 'relaxed' && localStorage.getItem('cf_speed_v1') === 'relaxed', vals());
 
 console.log('\n===== B 联机模式：handler / 广播 / 回滚 / 离开恢复 =====');
 let sent = null;
 S.setHandler(key => { sent = key; });            // 模拟 online.js 接管
-change('fast', 1);
-ck('★ 联机切换交给 handler（带正确档位）', sent === 'fast', String(sent));
-ck('★ 联机切换不写本机存档', localStorage.getItem('cf_speed_v1') === 'normal', localStorage.getItem('cf_speed_v1'));
+change('slow', 1);
+ck('★ 联机切换交给 handler（带正确档位）', sent === 'slow', String(sent));
+ck('★ 联机切换不写本机存档', localStorage.getItem('cf_speed_v1') === 'relaxed', localStorage.getItem('cf_speed_v1'));
 
 // 模拟 online.js：乐观更新本地节奏，再等服务端广播
-S.applyLocal('fast', false);
-ck('乐观更新后引擎节奏已变、存档仍未动', CF.TIMING.speed === 'fast' && localStorage.getItem('cf_speed_v1') === 'normal');
-S.syncFromServer('slow');
-ck('★ 服务端广播覆盖客户端显示', CF.TIMING.speed === 'slow' && vals() === 'slow,slow,slow', vals());
-ck('广播同样不污染本机存档', localStorage.getItem('cf_speed_v1') === 'normal', localStorage.getItem('cf_speed_v1'));
+S.applyLocal('slow', false);
+ck('乐观更新后引擎节奏已变、存档仍未动', CF.TIMING.speed === 'slow' && localStorage.getItem('cf_speed_v1') === 'relaxed');
+S.syncFromServer('relaxed');
+ck('★ 服务端广播覆盖客户端显示', CF.TIMING.speed === 'relaxed' && vals() === 'relaxed,relaxed,relaxed', vals());
+ck('广播同样不污染本机存档', localStorage.getItem('cf_speed_v1') === 'relaxed', localStorage.getItem('cf_speed_v1'));
 
 S.rollback();
-ck('发送失败可回滚到服务端最近档位', CF.TIMING.speed === 'slow' && vals() === 'slow,slow,slow', vals());
+ck('发送失败可回滚到服务端最近档位', CF.TIMING.speed === 'relaxed' && vals() === 'relaxed,relaxed,relaxed', vals());
 
 S.disable(['lobby-speed', 'game-speed'], true);
 ck('非房主可禁用大厅与顶栏下拉',
@@ -98,13 +98,15 @@ ck('非房主可禁用大厅与顶栏下拉',
   selects.map(s => s.disabled).join(','));
 
 S.restoreLocal();
-ck('★ 离开联机后恢复玩家自己的单机档位', CF.TIMING.speed === 'normal' && vals() === 'normal,normal,normal', vals());
+ck('★ 离开联机后恢复玩家自己的单机档位', CF.TIMING.speed === 'relaxed' && vals() === 'relaxed,relaxed,relaxed', vals());
 S.disable(['lobby-speed', 'game-speed'], false);
 ck('离开联机后控件重新可编辑', selects.every(s => !s.disabled));
 sent = null;
 change('slow', 0);
 ck('★ restoreLocal 清掉了联机 handler（回到本地分支）', sent === null && CF.TIMING.speed === 'slow', String(sent));
 ck('非法档位回落到默认档', S.norm('bogus') === CF.DEFAULT_SPEED);
+ck('★ 旧存档 normal / fast 自动回落到默认「快速」档',
+  S.norm('normal') === 'relaxed' && S.norm('fast') === 'relaxed');
 
 console.log('\n========================================');
 console.log(`  SpeedUI 模块回归：${pass} 通过 / ${fail} 失败`);

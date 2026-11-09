@@ -207,11 +207,12 @@ head('D 单次掷骰的 emit 次数（联机每 emit = 一次全状态广播 + �
   ck('单次掷骰会产生 ≥ steps 次状态广播', clock.emits >= steps, `${clock.emits} 次`);
 }
 
-/* ---------------- E 固定等待耗时（显式指定标准档，避免受默认档位影响） ---------------- */
-head('E 「标准」档下，一轮 4 人回合的「纯代码等待」时长（零网络）');
+/* ---------------- E 固定等待耗时（直接用 1.0 倍基准，不受档位表影响） ---------------- */
+head('E 基准节奏（1.0 倍）下，一轮 4 人回合的「纯代码等待」时长（零网络）');
 {
   const { Engine, CF, clock } = makeEngine({ fast: false });
-  CF.applySpeed('normal');           // 固定基准档，测量结果才可跨版本比较
+  // 档位表精简为两档后不再有 1.0 倍档，直接还原 TIMING_BASE 作为跨版本比较基准
+  Object.keys(CF.TIMING_BASE).forEach(k => { CF.TIMING[k] = CF.TIMING_BASE[k]; });
   Engine.start(cfg(4, -1));
   let guard = 0;
   while (Engine.state().turn < 8 && guard++ < 5000) {
@@ -228,7 +229,7 @@ head('E 「标准」档下，一轮 4 人回合的「纯代码等待」时长（
 }
 
 /* ---------------- G 速度档位与运行中切换 ---------------- */
-head('G 四档速度：档位表完整性、引擎确实读到档位、运行中改档即时生效');
+head('G 两档速度：档位表完整性、引擎确实读到档位、运行中改档即时生效');
 {
   const { Engine, CF, clock } = makeEngine({ fast: false });
   const rows = CF.SPEED_PRESETS.map(p => {
@@ -237,17 +238,19 @@ head('G 四档速度：档位表完整性、引擎确实读到档位、运行中
   });
   rows.forEach(r => console.log('  ' + r));
 
-  ck('默认档位是「舒缓」（比标准慢，AI 每一步看得清）', CF.DEFAULT_SPEED === 'relaxed');
-  ck('共 4 档且倍率严格递减',
-    CF.SPEED_PRESETS.length === 4 &&
+  ck('默认档位是「快速」', CF.DEFAULT_SPEED === 'relaxed');
+  ck('共 2 档且倍率严格递减',
+    CF.SPEED_PRESETS.length === 2 &&
     CF.SPEED_PRESETS.every((p, i, a) => i === 0 || p.scale < a[i - 1].scale));
   ck('未知档位安全回落到默认档', CF.normSpeed('not-a-speed') === CF.DEFAULT_SPEED);
+  ck('★ 已关闭的 normal / fast 也回落到默认档',
+    CF.normSpeed('normal') === CF.DEFAULT_SPEED && CF.normSpeed('fast') === CF.DEFAULT_SPEED);
 
   const holdOf = k => { CF.applySpeed(k); return CF.TIMING.walkHold; };
-  ck('★ 慢速档比极快档慢 5 倍以上',
-    holdOf('slow') > holdOf('fast') * 5, `${holdOf('slow')} vs ${holdOf('fast')}`);
+  ck('★ 慢速档比快速档慢（3.0 倍 vs 1.8 倍）',
+    holdOf('slow') > holdOf('relaxed') * 1.5, `${holdOf('slow')} vs ${holdOf('relaxed')}`);
   ck('档位只改表现层数值，不碰规则参数（TUNING 未变）',
-    typeof CF.TUNING === 'object' && CF.TIMING.speed === 'fast');
+    typeof CF.TUNING === 'object' && CF.TIMING.speed === 'relaxed');
 
   /* 引擎持有 CF.TIMING 的对象引用：同一起始状态下，慢速档耗时必须显著更长 */
   function runHands(speed, hands) {
@@ -261,9 +264,9 @@ head('G 四档速度：档位表完整性、引擎确实读到档位、运行中
     }
     return e.clock.now;
   }
-  const slowMs = runHands('slow', 3), fastMs = runHands('fast', 3);
-  console.log(`  同样跑 3 手：慢速 ${slowMs} ms / 极快 ${fastMs} ms`);
-  ck('★ 引擎实际按档位节奏推进（慢速 > 极快 ×2）', slowMs > fastMs * 2, `${slowMs} vs ${fastMs}`);
+  const slowMs = runHands('slow', 3), quickMs = runHands('relaxed', 3);
+  console.log(`  同样跑 3 手：慢速 ${slowMs} ms / 快速 ${quickMs} ms`);
+  ck('★ 引擎实际按档位节奏推进（慢速 > 快速 ×1.4）', slowMs > quickMs * 1.4, `${slowMs} vs ${quickMs}`);
 
   /* 运行中切档：不重开局，后续定时器也要按新节奏 */
   CF.applySpeed('slow');
@@ -271,10 +274,10 @@ head('G 四档速度：档位表完整性、引擎确实读到档位、运行中
   let g2 = 0;
   while (Engine.state().turn < 2 && g2++ < 2000) { if (!clock.timers.size) break; clock.step(); }
   const t0 = clock.now;
-  CF.applySpeed('fast');
+  CF.applySpeed('relaxed');
   while (Engine.state().turn < 5 && g2++ < 4000) { if (!clock.timers.size) break; clock.step(); }
   const after = clock.now - t0;
-  console.log(`  运行中从慢速切到极快后，再跑 3 手耗时 ${after} ms`);
+  console.log(`  运行中从慢速切到快速后，再跑 3 手耗时 ${after} ms`);
   ck('★ 运行中改档即时生效（无需重开局）', after > 0 && after < slowMs, `${after} ms`);
 }
 
@@ -284,7 +287,7 @@ head('H 真人玩家节奏不受 AI 速度档位影响（玩家明确要求）')
   const { CF } = makeEngine({ fast: false });
   const keys = Object.keys(CF.HUMAN_TIMING);
   ck('真人节奏单独成组（4 个 humanWalk* 字段）', keys.length === 4 && keys.every(k => /^humanWalk/.test(k)), keys.join(','));
-  ck('真人固定值等于「标准」档基准',
+  ck('真人固定值等于基准节奏',
     CF.HUMAN_TIMING.humanWalkHold === CF.TIMING_BASE.walkHold &&
     CF.HUMAN_TIMING.humanWalkTotal === CF.TIMING_BASE.walkTotal,
     `hold ${CF.HUMAN_TIMING.humanWalkHold} vs ${CF.TIMING_BASE.walkHold}`);
@@ -292,13 +295,13 @@ head('H 真人玩家节奏不受 AI 速度档位影响（玩家明确要求）')
   const before = keys.map(k => CF.TIMING[k]);
   CF.applySpeed('slow');
   const afterSlow = keys.map(k => CF.TIMING[k]);
-  CF.applySpeed('fast');
+  CF.applySpeed('relaxed');
   const afterFast = keys.map(k => CF.TIMING[k]);
   ck('★ applySpeed 改档时绝不触碰真人节奏字段',
     before.every((v, i) => v === afterSlow[i] && v === afterFast[i]),
     `${before} → ${afterSlow} → ${afterFast}`);
 
-  /* 端到端量化：真人在慢速档与极快档下，掷骰停顿和逐格间隔必须完全一致 */
+  /* 端到端量化：真人在慢速档与快速档下，掷骰停顿和逐格间隔必须完全一致 */
   function humanWalk(speed) {
     const e = makeEngine({ fast: false, random: 0.5 });   // 固定掷出 4 点，两次完全可比
     e.CF.applySpeed(speed);
@@ -311,14 +314,14 @@ head('H 真人玩家节奏不受 AI 速度档位影响（玩家明确要求）')
     const w = e.Engine.state().walk;
     return { hold: e.clock.now, stepMs: w && w.stepMs, aiHold: e.CF.TIMING.walkHold };
   }
-  const hSlow = humanWalk('slow'), hFast = humanWalk('fast');
-  console.log(`  真人：慢速档 [停顿 ${hSlow.hold}ms / 每格 ${hSlow.stepMs}ms]，极快档 [停顿 ${hFast.hold}ms / 每格 ${hFast.stepMs}ms]`);
+  const hSlow = humanWalk('slow'), hFast = humanWalk('relaxed');
+  console.log(`  真人：慢速档 [停顿 ${hSlow.hold}ms / 每格 ${hSlow.stepMs}ms]，快速档 [停顿 ${hFast.hold}ms / 每格 ${hFast.stepMs}ms]`);
   console.log(`  同期 AI 的 walkHold：${hSlow.aiHold}ms → ${hFast.aiHold}ms`);
-  ck('★ 真人掷骰后停顿不随档位变化，且等于标准值',
+  ck('★ 真人掷骰后停顿不随档位变化，且等于基准值',
     hSlow.hold === hFast.hold && hSlow.hold === CF.TIMING_BASE.walkHold, `${hSlow.hold} vs ${hFast.hold}`);
   ck('★ 真人逐格行走间隔不随档位变化',
     hSlow.stepMs === hFast.stepMs && hSlow.stepMs > 0, `${hSlow.stepMs} vs ${hFast.stepMs}`);
-  ck('★ 同一时刻 AI 节奏确实按档位变了', hSlow.aiHold > hFast.aiHold * 5, `${hSlow.aiHold} vs ${hFast.aiHold}`);
+  ck('★ 同一时刻 AI 节奏确实按档位变了', hSlow.aiHold > hFast.aiHold * 1.5, `${hSlow.aiHold} vs ${hFast.aiHold}`);
 }
 
 /* ---------------- F 联机状态序列化 ---------------- */

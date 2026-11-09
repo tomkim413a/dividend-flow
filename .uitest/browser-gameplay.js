@@ -40,7 +40,7 @@ function ck(name, ok, detail) {
   await page.waitForSelector('#player-cfg .pcfg');
   ck('设置页正常加载', (await page.locator('#player-cfg .pcfg').count()) >= 2);
 
-  // 速度档位：默认「舒缓」，三个界面各有一个下拉，切换后即时生效
+  // 速度档位：默认「快速」，三个界面各有一个下拉，切换后即时生效
   const speed = await page.evaluate(() => ({
     key: window.CF.TIMING.speed,
     hold: window.CF.TIMING.walkHold,
@@ -52,13 +52,15 @@ function ck(name, ok, detail) {
     lobbyVal: (document.getElementById('lobby-speed') || {}).value,
     hint: (document.getElementById('setup-speed-hint') || {}).textContent
   }));
-  ck('默认「舒缓」档、四档齐全', speed.key === 'relaxed' && speed.presets.length === 4, JSON.stringify(speed));
+  ck('默认「快速」档、两档齐全（标准 / 极快已关闭）',
+    speed.key === 'relaxed' && speed.presets.length === 2 &&
+    speed.presets.join(',') === 'slow,relaxed', JSON.stringify(speed));
   ck('开始页 / 顶栏 / 联机大厅三处下拉都已填充且同步',
     speed.selects === 3 && speed.setupVal === speed.key && speed.topVal === speed.key && speed.lobbyVal === speed.key,
     JSON.stringify(speed));
   ck('档位说明已显示且明确只讲 AI', /AI 每格|AI 每手/.test(speed.hint || ''), speed.hint);
-  ck('界面把「AI 可调 / 真人固定」分成两个独立单元',
-    (await page.locator('.speed-fixed').count()) === 2, String(await page.locator('.speed-fixed').count()));
+  ck('★ 界面已删除「真人回合固定节奏」说明块',
+    (await page.locator('.speed-fixed').count()) === 0, String(await page.locator('.speed-fixed').count()));
 
   const changed = await page.evaluate(() => {
     const sel = document.getElementById('setup-speed');
@@ -80,10 +82,10 @@ function ck(name, ok, detail) {
   ck('档位已持久化（file:// 禁用存储时允许为 null）',
     changed.saved === 'slow' || changed.saved === null, String(changed.saved));
 
-  // 单手耗时测试固定用「标准」档，避免被慢速档拉长
+  // 单手耗时测试固定用「快速」档，避免被慢速档拉长
   await page.evaluate(() => {
     const sel = document.getElementById('setup-speed');
-    sel.value = 'normal'; sel.dispatchEvent(new Event('change'));
+    sel.value = 'relaxed'; sel.dispatchEvent(new Event('change'));
   });
 
   await page.click('#btn-start');
@@ -176,6 +178,31 @@ function ck(name, ok, detail) {
     ck('★ 3 次 render 后弹窗未重建（DOM 节点保持）', probe.sameNode, JSON.stringify(probe));
     ck('★ 玩家输入的股数未被清空', probe.val === null || probe.val === '7', String(probe.val));
   }
+
+  /* ---- 联机同帧多状态包：走格每一格都必须被画出（不丢中间格） ---- */
+  const frames = await page.evaluate(async () => {
+    const S = window.Engine.state();
+    const base = JSON.parse(JSON.stringify(S));
+    base.queue = []; base.gate = false; base.needFinish = false;
+    const board = document.querySelector('#board');
+    const seen = [];
+    // 同一帧内连续注入 3 个走格状态，模拟网络抖动把 3 个 STATE 挤到一起
+    for (let k = 1; k <= 3; k++) {
+      const st = JSON.parse(JSON.stringify(base));
+      st.walk = { idx: st.cur, left: 3 - k, steps: 3, stepMs: 180 };
+      st.players[st.cur].hamsterPos = (base.players[st.cur].hamsterPos + k) % window.CF.HAMSTER_SIZE;
+      window.ONLINE_HOOKS.applyState(st);
+    }
+    for (let i = 0; i < 14; i++) {
+      await new Promise(r => requestAnimationFrame(r));
+      const a = board.querySelector('.active');
+      if (a) seen.push((a.getAttribute('title') || '').slice(0, 10));
+    }
+    return seen;
+  });
+  const distinct = [...new Set(frames)].filter(Boolean);
+  console.log('  同帧 3 包逐帧渲染到的高亮格：' + JSON.stringify(distinct));
+  ck('★ 同帧 3 个走格状态都逐帧渲染（不丢中间格）', distinct.length >= 3, JSON.stringify(distinct));
 
   /* ---- 页面无异常 ---- */
   ck('★ 全程无 JS 异常', errors.length === 0, errors.slice(0, 3).join(' | '));

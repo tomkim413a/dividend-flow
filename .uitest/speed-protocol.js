@@ -35,8 +35,8 @@ head('A 房间级速度：默认值 / 白名单 / 开局传入 / 运行中改档
   const r1 = roomMgr.createRoom(host);
   ck('新建房间使用默认档位', r1.speed === roomMgr.DEFAULT_SPEED, r1.speed);
 
-  const r2 = roomMgr.createRoom(host, '', 'fast');
-  ck('建房可指定档位', r2.speed === 'fast', r2.speed);
+  const r2 = roomMgr.createRoom(host, '', 'relaxed');
+  ck('建房可指定档位', r2.speed === 'relaxed', r2.speed);
 
   const r3 = roomMgr.createRoom(host, '', 'not-a-speed');
   ck('非法档位安全回落到默认', r3.speed === roomMgr.DEFAULT_SPEED, r3.speed);
@@ -45,7 +45,7 @@ head('A 房间级速度：默认值 / 白名单 / 开局传入 / 运行中改档
   ck('房间开局成功', !started.err, started.err || '');
   const g = r2.game;
   ck('★ 引擎按建房时指定的档位初始化',
-    g.CF.TIMING.speed === 'fast' && g.CF.TIMING.walkHold < 200,
+    g.CF.TIMING.speed === 'relaxed' && g.CF.TIMING.walkHold > 500,
     `speed=${g.CF.TIMING.speed} hold=${g.CF.TIMING.walkHold}`);
 
   const before = g.CF.TIMING.walkHold;
@@ -54,20 +54,20 @@ head('A 房间级速度：默认值 / 白名单 / 开局传入 / 运行中改档
   const set = roomMgr.setSpeed(r2.id, host.id, 'slow');
   ck('房主在对局中改档成功', !set.err && set.room.speed === 'slow', set.err || set.room.speed);
   ck('★ 改档即时作用到该房间的引擎（无需重开局）',
-    g.CF.TIMING.speed === 'slow' && g.CF.TIMING.walkHold > before * 3,
+    g.CF.TIMING.speed === 'slow' && g.CF.TIMING.walkHold > before * 1.5,
     `${before} → ${g.CF.TIMING.walkHold}`);
   ck('★ 服务端改档同样不影响真人节奏',
     humanKeys.every((k, i) => g.CF.TIMING[k] === humanBefore[i]),
     `${humanBefore} → ${humanKeys.map(k => g.CF.TIMING[k])}`);
 
   // 另一个房间：档位互不影响
-  const r4 = roomMgr.createRoom({ id: 'spd-other', username: '别人' }, '', 'fast');
+  const r4 = roomMgr.createRoom({ id: 'spd-other', username: '别人' }, '', 'relaxed');
   roomMgr.startGame(r4.id, () => {}, () => {});
   ck('★ 房间之间速度互不串扰',
-    r4.game.CF.TIMING.speed === 'fast' && g.CF.TIMING.speed === 'slow',
+    r4.game.CF.TIMING.speed === 'relaxed' && g.CF.TIMING.speed === 'slow',
     `别的房间=${r4.game.CF.TIMING.speed} 本房间=${g.CF.TIMING.speed}`);
 
-  const denied = roomMgr.setSpeed(r2.id, 'stranger', 'fast');
+  const denied = roomMgr.setSpeed(r2.id, 'stranger', 'slow');
   ck('对局中非房主改档被拒', !!denied.err, denied.err || '(错误地允许了)');
   const joined = roomMgr.joinRoom(r1.id, { id: 'spd-guest', username: '客人' });
   ck('未开局时非房主可以改档', !roomMgr.setSpeed(r1.id, 'spd-guest', 'slow').err, joined.err || '');
@@ -108,10 +108,10 @@ async function socketTests() {
   await wait(300);
   ck('第二名玩家成功加入房间', rooms2.length > 0 && rooms2[rooms2.length - 1].id === roomId, roomId);
 
-  s1.emit(CS.SET_SPEED, { speed: 'fast' });
+  s1.emit(CS.SET_SPEED, { speed: 'relaxed' });
   await wait(300);
   ck('★ SET_SPEED 后两个客户端都收到新档位',
-    rooms1.some(r => r.speed === 'fast') && rooms2.some(r => r.speed === 'fast'),
+    rooms1.some(r => r.speed === 'relaxed') && rooms2.some(r => r.speed === 'relaxed'),
     `房主=${rooms1.map(r => r.speed)} 客人=${rooms2.map(r => r.speed)}`);
 
   s1.emit(CS.SET_SPEED, { speed: 'bogus' });
@@ -128,9 +128,9 @@ async function socketTests() {
   ck('★ 对局中非房主改档被明确拒绝',
     errs2.some(m => /房主/.test(m || '')), JSON.stringify(errs2));
 
-  s1.emit(CS.SET_SPEED, { speed: 'normal' });
+  s1.emit(CS.SET_SPEED, { speed: 'slow' });
   await wait(300);
-  ck('★ 房主在对局中仍可改档', rooms1.some(r => r.speed === 'normal'),
+  ck('★ 房主在对局中仍可改档', rooms1.some(r => r.speed === 'slow'),
     JSON.stringify(rooms1.map(r => r.speed)));
 
   s1.disconnect(); s2.disconnect();
