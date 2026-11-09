@@ -449,11 +449,9 @@
   // 2026-11-09 卡顿优化：旧值（1200/2000/160~600/900/700）实测零网络下
   //    平均每手要空等约 3.9~4.2 秒、4 人一圈近 16 秒，玩家会误以为「卡死」。
   // 2026-11-09 二次调整：压到「标准」档后玩家反馈 AI 一瞬间走完、看不清每一步，
-  //    因此改为多档可选，默认「舒缓」（比基准慢 1.8 倍，仍远快于旧版）。
+  //    因此改为四档可选，默认「舒缓」（比标准慢 1.8 倍，仍远快于旧版）。
   //    engine.js 持有 TIMING 的对象引用，改属性即时生效；服务端每个房间各有
   //    一份 vm 上下文，applySpeed 只影响该房间，不会串到其他对局。
-  // 2026-11-09 三次调整（玩家要求）：取消「极快」档、把「标准」改名为「快速」，
-  //    只剩三档；另外给【联机】单独放慢真人节奏并加落格停留，单机一律不动（见 ONLINE_TIMING）。
   const TIMING_BASE = {
     walkHold: 320,    // 掷骰后停顿（ms），再开始逐格行走
     walkTotal: 900,   // 单次掷骰走完全程的基准时长（ms）
@@ -463,16 +461,15 @@
     aiChooseMs: 260   // AI 翻卡做决策的延迟（ms）
   };
 
-  /* 三档 AI 速度（key 保持兼容：旧的 localStorage 存档 / 房间档位写 fast 会被
-     normSpeed 安全回落到 relaxed；normal 只改中文名，不换 key）。 */
   const SPEED_PRESETS = [
-    { key: 'slow',    label: '🤖 慢速 · 看清每一步', scale: 3.0, note: 'AI 每格约 0.3–0.7 秒，AI 每手约 5 秒' },
-    { key: 'relaxed', label: '🤖 舒缓 · 推荐',       scale: 1.8, note: 'AI 每格约 0.2–0.4 秒，AI 每手约 3 秒' },
-    { key: 'normal',  label: '🤖 快速',              scale: 1.0, note: 'AI 每格约 0.1–0.2 秒，AI 每手约 1.7 秒' }
+    { key: 'slow',    label: '🤖 慢速 · 看清每一步', scale: 3.0,  note: 'AI 每格约 0.3–0.7 秒，AI 每手约 5 秒' },
+    { key: 'relaxed', label: '🤖 舒缓 · 推荐',       scale: 1.8,  note: 'AI 每格约 0.2–0.4 秒，AI 每手约 3 秒' },
+    { key: 'normal',  label: '🤖 标准',              scale: 1.0,  note: 'AI 每格约 0.1–0.2 秒，AI 每手约 1.7 秒' },
+    { key: 'fast',    label: '🤖 极快',              scale: 0.45, note: 'AI 每格约 0.05 秒，AI 几乎瞬间走完' }
   ];
   const DEFAULT_SPEED = 'relaxed';
 
-  /* 真人玩家节奏（单机默认值）：与 AI 档位完全解耦的固定值。
+  /* 真人玩家节奏：与 AI 档位完全解耦的固定值，永远等于「标准」档。
      档位只改电脑玩家的出手与走格；真人掷骰、走格、操作都不受任何影响，
      也不会被动画拖慢（玩家自己的思考时间本来就完全自由）。
      放在 TIMING 内部是为了让批量模拟的「把数字字段整体归零」逻辑一并覆盖它。 */
@@ -482,22 +479,7 @@
     humanWalkStepMin: 90,
     humanWalkStepMax: 220
   };
-
-  /* ★ 仅联机（网络版）生效的表现层节奏 —— 2026-11-09 玩家要求：
-       1. 棋子落到最后一格后先停 ~500 ms 再弹事件，避免「还没看清棋位就弹窗」；
-       2. 真人每格放慢到 220–280 ms（下限 220 / 上限 280）。
-     这两项【绝不作用于单机】：浏览器直接加载 data.js 时 TIMING 保持
-     onlineMode=false / landDelayMs=0，engine.js 的 landDelayFor() 原样沿用旧 stepMs，
-     行为与本次改动前完全一致。只有服务端 engineHost.js 托管引擎时调用
-     applyOnlineTiming() 才切换 —— 这就是「只改网络版、单人版只取消极快模式」的隔离点。
-     applySpeed() 只遍历 TIMING_BASE，房间内改 AI 档位不会冲掉这几个值。 */
-  const ONLINE_TIMING = {
-    humanWalkStepMin: 220,
-    humanWalkStepMax: 280,
-    landDelayMs: 500
-  };
-  const TIMING = Object.assign({}, TIMING_BASE, HUMAN_TIMING,
-    { speed: DEFAULT_SPEED, onlineMode: false, landDelayMs: 0 });
+  const TIMING = Object.assign({}, TIMING_BASE, HUMAN_TIMING, { speed: DEFAULT_SPEED });
 
   function normSpeed(k) {
     return SPEED_PRESETS.some(p => p.key === k) ? k : DEFAULT_SPEED;
@@ -516,15 +498,6 @@
     return p.key;
   }
   applySpeed(DEFAULT_SPEED);
-
-  /** 切到联机（网络版）节奏：仅由 server/engineHost.js 在 vm 上下文里调用一次。
-   *  之后房间改档走 applySpeed()，只动 TIMING_BASE 的 6 个 AI 字段，
-   *  不会把 onlineMode / landDelayMs / humanWalkStepMin/Max 冲回单机值。 */
-  function applyOnlineTiming() {
-    Object.keys(ONLINE_TIMING).forEach(f => { TIMING[f] = ONLINE_TIMING[f]; });
-    TIMING.onlineMode = true;
-    return TIMING;
-  }
 
   /* ============================================================
    * 9. 战绩存档 Stats —— 跨局累计（localStorage 持久化）
@@ -633,8 +606,7 @@
     HOUSES, DOODADS, pickDoodad,
     RULES,
     TUNING, AI_POLICY, TIMING,
-    TIMING_BASE, HUMAN_TIMING, ONLINE_TIMING, SPEED_PRESETS, DEFAULT_SPEED,
-    normSpeed, speedInfo, applySpeed, applyOnlineTiming,
+    TIMING_BASE, HUMAN_TIMING, SPEED_PRESETS, DEFAULT_SPEED, normSpeed, speedInfo, applySpeed,
     Stats
   };
 })();

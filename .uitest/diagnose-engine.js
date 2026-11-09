@@ -207,11 +207,11 @@ head('D 单次掷骰的 emit 次数（联机每 emit = 一次全状态广播 + �
   ck('单次掷骰会产生 ≥ steps 次状态广播', clock.emits >= steps, `${clock.emits} 次`);
 }
 
-/* ---------------- E 固定等待耗时（显式指定「快速」档，避免受默认档位影响） ---------------- */
-head('E 「快速」档下，一轮 4 人回合的「纯代码等待」时长（零网络）');
+/* ---------------- E 固定等待耗时（显式指定标准档，避免受默认档位影响） ---------------- */
+head('E 「标准」档下，一轮 4 人回合的「纯代码等待」时长（零网络）');
 {
   const { Engine, CF, clock } = makeEngine({ fast: false });
-  CF.applySpeed('normal');           // 固定基准档（原「标准」，现已改名「快速」），测量结果才可跨版本比较
+  CF.applySpeed('normal');           // 固定基准档，测量结果才可跨版本比较
   Engine.start(cfg(4, -1));
   let guard = 0;
   while (Engine.state().turn < 8 && guard++ < 5000) {
@@ -228,7 +228,7 @@ head('E 「快速」档下，一轮 4 人回合的「纯代码等待」时长（
 }
 
 /* ---------------- G 速度档位与运行中切换 ---------------- */
-head('G 三档速度（极快已取消）：档位表完整性、引擎确实读到档位、运行中改档即时生效');
+head('G 四档速度：档位表完整性、引擎确实读到档位、运行中改档即时生效');
 {
   const { Engine, CF, clock } = makeEngine({ fast: false });
   const rows = CF.SPEED_PRESETS.map(p => {
@@ -237,26 +237,21 @@ head('G 三档速度（极快已取消）：档位表完整性、引擎确实读
   });
   rows.forEach(r => console.log('  ' + r));
 
-  ck('默认档位是「舒缓」', CF.DEFAULT_SPEED === 'relaxed');
-  ck('★ 共 3 档且倍率严格递减（极快 fast 已删除）',
-    CF.SPEED_PRESETS.length === 3 &&
-    !CF.SPEED_PRESETS.some(p => p.key === 'fast') &&
+  ck('默认档位是「舒缓」（比标准慢，AI 每一步看得清）', CF.DEFAULT_SPEED === 'relaxed');
+  ck('共 4 档且倍率严格递减',
+    CF.SPEED_PRESETS.length === 4 &&
     CF.SPEED_PRESETS.every((p, i, a) => i === 0 || p.scale < a[i - 1].scale));
-  ck('★ normal 档中文名已改「快速」，key 保持不变',
-    CF.SPEED_PRESETS.some(p => p.key === 'normal' && /快速/.test(p.label)));
-  ck('未知档位 / 旧 fast 存档安全回落到默认档',
-    CF.normSpeed('not-a-speed') === CF.DEFAULT_SPEED &&
-    CF.normSpeed('fast') === CF.DEFAULT_SPEED);
+  ck('未知档位安全回落到默认档', CF.normSpeed('not-a-speed') === CF.DEFAULT_SPEED);
 
   const holdOf = k => { CF.applySpeed(k); return CF.TIMING.walkHold; };
-  ck('★ 慢速档是快速档的 3 倍（最快只剩 normal）',
-    holdOf('slow') === holdOf('normal') * 3, `${holdOf('slow')} vs ${holdOf('normal')}`);
+  ck('★ 慢速档比极快档慢 5 倍以上',
+    holdOf('slow') > holdOf('fast') * 5, `${holdOf('slow')} vs ${holdOf('fast')}`);
   ck('档位只改表现层数值，不碰规则参数（TUNING 未变）',
-    typeof CF.TUNING === 'object' && CF.TIMING.speed === 'normal');
+    typeof CF.TUNING === 'object' && CF.TIMING.speed === 'fast');
 
   /* 引擎持有 CF.TIMING 的对象引用：同一起始状态下，慢速档耗时必须显著更长 */
   function runHands(speed, hands) {
-    const e = makeEngine({ fast: false, random: 0.5 });
+    const e = makeEngine({ fast: false });
     e.CF.applySpeed(speed);
     e.Engine.start(cfg(4, -1));
     let guard = 0;
@@ -266,9 +261,9 @@ head('G 三档速度（极快已取消）：档位表完整性、引擎确实读
     }
     return e.clock.now;
   }
-  const slowMs = runHands('slow', 3), quickMs = runHands('normal', 3);
-  console.log(`  同样跑 3 手：慢速 ${slowMs} ms / 快速 ${quickMs} ms`);
-  ck('★ 引擎实际按档位节奏推进（慢速 > 快速 ×1.8）', slowMs > quickMs * 1.8, `${slowMs} vs ${quickMs}`);
+  const slowMs = runHands('slow', 3), fastMs = runHands('fast', 3);
+  console.log(`  同样跑 3 手：慢速 ${slowMs} ms / 极快 ${fastMs} ms`);
+  ck('★ 引擎实际按档位节奏推进（慢速 > 极快 ×2）', slowMs > fastMs * 2, `${slowMs} vs ${fastMs}`);
 
   /* 运行中切档：不重开局，后续定时器也要按新节奏 */
   CF.applySpeed('slow');
@@ -276,10 +271,10 @@ head('G 三档速度（极快已取消）：档位表完整性、引擎确实读
   let g2 = 0;
   while (Engine.state().turn < 2 && g2++ < 2000) { if (!clock.timers.size) break; clock.step(); }
   const t0 = clock.now;
-  CF.applySpeed('normal');
+  CF.applySpeed('fast');
   while (Engine.state().turn < 5 && g2++ < 4000) { if (!clock.timers.size) break; clock.step(); }
   const after = clock.now - t0;
-  console.log(`  运行中从慢速切到快速后，再跑 3 手耗时 ${after} ms`);
+  console.log(`  运行中从慢速切到极快后，再跑 3 手耗时 ${after} ms`);
   ck('★ 运行中改档即时生效（无需重开局）', after > 0 && after < slowMs, `${after} ms`);
 }
 
@@ -289,7 +284,7 @@ head('H 真人玩家节奏不受 AI 速度档位影响（玩家明确要求）')
   const { CF } = makeEngine({ fast: false });
   const keys = Object.keys(CF.HUMAN_TIMING);
   ck('真人节奏单独成组（4 个 humanWalk* 字段）', keys.length === 4 && keys.every(k => /^humanWalk/.test(k)), keys.join(','));
-  ck('真人固定值等于未缩放的基准值',
+  ck('真人固定值等于「标准」档基准',
     CF.HUMAN_TIMING.humanWalkHold === CF.TIMING_BASE.walkHold &&
     CF.HUMAN_TIMING.humanWalkTotal === CF.TIMING_BASE.walkTotal,
     `hold ${CF.HUMAN_TIMING.humanWalkHold} vs ${CF.TIMING_BASE.walkHold}`);
@@ -297,13 +292,13 @@ head('H 真人玩家节奏不受 AI 速度档位影响（玩家明确要求）')
   const before = keys.map(k => CF.TIMING[k]);
   CF.applySpeed('slow');
   const afterSlow = keys.map(k => CF.TIMING[k]);
-  CF.applySpeed('normal');
-  const afterQuick = keys.map(k => CF.TIMING[k]);
+  CF.applySpeed('fast');
+  const afterFast = keys.map(k => CF.TIMING[k]);
   ck('★ applySpeed 改档时绝不触碰真人节奏字段',
-    before.every((v, i) => v === afterSlow[i] && v === afterQuick[i]),
-    `${before} → ${afterSlow} → ${afterQuick}`);
+    before.every((v, i) => v === afterSlow[i] && v === afterFast[i]),
+    `${before} → ${afterSlow} → ${afterFast}`);
 
-  /* 端到端量化：真人在慢速档与快速档下，掷骰停顿和逐格间隔必须完全一致 */
+  /* 端到端量化：真人在慢速档与极快档下，掷骰停顿和逐格间隔必须完全一致 */
   function humanWalk(speed) {
     const e = makeEngine({ fast: false, random: 0.5 });   // 固定掷出 4 点，两次完全可比
     e.CF.applySpeed(speed);
@@ -316,105 +311,14 @@ head('H 真人玩家节奏不受 AI 速度档位影响（玩家明确要求）')
     const w = e.Engine.state().walk;
     return { hold: e.clock.now, stepMs: w && w.stepMs, aiHold: e.CF.TIMING.walkHold };
   }
-  const hSlow = humanWalk('slow'), hQuick = humanWalk('normal');
-  console.log(`  真人：慢速档 [停顿 ${hSlow.hold}ms / 每格 ${hSlow.stepMs}ms]，快速档 [停顿 ${hQuick.hold}ms / 每格 ${hQuick.stepMs}ms]`);
-  console.log(`  同期 AI 的 walkHold：${hSlow.aiHold}ms → ${hQuick.aiHold}ms`);
-  ck('★ 真人掷骰后停顿不随档位变化，且等于基准值',
-    hSlow.hold === hQuick.hold && hSlow.hold === CF.TIMING_BASE.walkHold, `${hSlow.hold} vs ${hQuick.hold}`);
+  const hSlow = humanWalk('slow'), hFast = humanWalk('fast');
+  console.log(`  真人：慢速档 [停顿 ${hSlow.hold}ms / 每格 ${hSlow.stepMs}ms]，极快档 [停顿 ${hFast.hold}ms / 每格 ${hFast.stepMs}ms]`);
+  console.log(`  同期 AI 的 walkHold：${hSlow.aiHold}ms → ${hFast.aiHold}ms`);
+  ck('★ 真人掷骰后停顿不随档位变化，且等于标准值',
+    hSlow.hold === hFast.hold && hSlow.hold === CF.TIMING_BASE.walkHold, `${hSlow.hold} vs ${hFast.hold}`);
   ck('★ 真人逐格行走间隔不随档位变化',
-    hSlow.stepMs === hQuick.stepMs && hSlow.stepMs > 0, `${hSlow.stepMs} vs ${hQuick.stepMs}`);
-  ck('★ 同一时刻 AI 节奏确实按档位变了', hSlow.aiHold > hQuick.aiHold * 2, `${hSlow.aiHold} vs ${hQuick.aiHold}`);
-}
-
-/* ---------------- I 联机「落格可读延迟」2026-11-09 新增 ----------------
- * 玩家反馈：事件弹得太快，还没看清棋子落在哪一格。
- * 用虚拟时钟精确量「最后一格落位 emit」→「pending 弹窗 emit」的间隔：
- *   联机（applyOnlineTiming）恒为 500 ms；单机保持原来的 stepMs，行为零变化。
- * ------------------------------------------------------------------ */
-head('I 「棋子落位 → 事件弹出」间隔：联机 500 ms / 单机完全不变');
-{
-  const POPUP_TYPES = ['divS', 'grwS', 'doodad', 'tax', 'charity'];
-
-  function measure(online, human, speed) {
-    const e = makeEngine({ fast: false, random: 0.5 });   // 固定掷 4 点，各次完全可比
-    if (online) e.CF.applyOnlineTiming();
-    e.CF.applySpeed(speed || 'relaxed');
-    const target = e.CF.HAMSTER_BOARD.findIndex((c, i) => i >= 4 && POPUP_TYPES.includes(c.type));
-    e.Engine.start(human ? cfg(2, 0) : cfg(2, -1));
-    const S = e.Engine.state();
-    S.cur = 0; S.gate = false; S.await = 'roll';
-    S.players[0].hamsterPos = target - 4;                 // 4 步后正好落在必弹事件的格子
-    e.clock.timers.clear();                               // 清掉 start 时 AI 的自动调度
-    let landedAt = null, popupAt = null, stepMs = null;
-    e.Engine.setRender(() => {
-      const st = e.Engine.state();
-      if (!st) return;
-      if (st.walk && st.walk.left === 0 && landedAt === null) {
-        landedAt = e.clock.now; stepMs = st.walk.stepMs;
-      }
-      if (st.pending && popupAt === null) popupAt = e.clock.now;
-    });
-    e.Engine.act.roll();
-    let guard = 0;
-    while (popupAt === null && guard++ < 2000) { if (!e.clock.timers.size) break; e.clock.step(); }
-    return { delta: (landedAt !== null && popupAt !== null) ? popupAt - landedAt : -1, stepMs };
-  }
-
-  const soloHuman = measure(false, true);
-  const onlineHuman = measure(true, true);
-  const soloAi = measure(false, false);
-  const onlineAi = measure(true, false);
-  [['单机·真人', soloHuman], ['联机·真人', onlineHuman],
-   ['单机·AI', soloAi], ['联机·AI', onlineAi]
-  ].forEach(([n, r]) => console.log(`  ${n}：落格→弹窗 ${r.delta} ms（走格每格 ${r.stepMs} ms）`));
-
-  ck('★ 单机真人：落格→弹窗仍等于旧 stepMs（单人版行为未改）',
-    soloHuman.delta === soloHuman.stepMs && soloHuman.delta > 0,
-    `${soloHuman.delta} vs ${soloHuman.stepMs}`);
-  ck('★ 单机 AI：落格→弹窗仍等于旧 stepMs（单人版行为未改）',
-    soloAi.delta === soloAi.stepMs && soloAi.delta > 0,
-    `${soloAi.delta} vs ${soloAi.stepMs}`);
-  ck('★ 联机真人：落格→弹窗 = 500 ms', onlineHuman.delta === 500, `${onlineHuman.delta} ms`);
-  ck('★ 联机 AI：落格→弹窗 = 500 ms', onlineAi.delta === 500, `${onlineAi.delta} ms`);
-  ck('★ 联机真人每格落在 220–280 ms（下限 220 / 上限 280）',
-    onlineHuman.stepMs >= 220 && onlineHuman.stepMs <= 280, `${onlineHuman.stepMs} ms`);
-  ck('★ 单机真人每格仍是旧值（≤220 ms）', soloHuman.stepMs <= 220, `${soloHuman.stepMs} ms`);
-
-  const perSpeed = ['slow', 'relaxed', 'normal'].map(k => ({ k, d: measure(true, true, k).delta }));
-  console.log('  联机三档下的落格延迟：' + perSpeed.map(x => `${x.k}=${x.d}ms`).join(' / '));
-  ck('★ 慢速 / 舒缓 / 快速三档，落格延迟恒定 500 ms（不随 AI 档位缩放）',
-    perSpeed.every(x => x.d === 500), JSON.stringify(perSpeed));
-
-  /* payday（银行结算日）本来就不弹事件，联机也不能白等 500 ms 拖慢每手 */
-  function measurePayday(online) {
-    const e = makeEngine({ fast: false, random: 0.5 });
-    if (online) e.CF.applyOnlineTiming();
-    e.CF.applySpeed('relaxed');
-    e.Engine.start(cfg(2, 0));
-    const S = e.Engine.state();
-    S.cur = 0; S.gate = false; S.await = 'roll';
-    S.players[0].hamsterPos = e.CF.HAMSTER_SIZE - 4;     // 4 步后正好落在 0 号 payday
-    e.clock.timers.clear();
-    let landedAt = null, stepMs = null, finishAt = null;
-    e.Engine.setRender(() => {
-      const st = e.Engine.state();
-      if (!st) return;
-      if (st.walk && st.walk.left === 0 && landedAt === null) {
-        landedAt = e.clock.now; stepMs = st.walk.stepMs;
-      }
-      if (landedAt !== null && finishAt === null && !st.walk &&
-          st.logs.some(l => /前进 4 格/.test(l.msg))) finishAt = e.clock.now;
-    });
-    e.Engine.act.roll();
-    let guard = 0;
-    while (finishAt === null && guard++ < 2000) { if (!e.clock.timers.size) break; e.clock.step(); }
-    return { delta: finishAt !== null ? finishAt - landedAt : -1, stepMs };
-  }
-  const pdSolo = measurePayday(false), pdOnline = measurePayday(true);
-  console.log(`  payday 落格→收尾：单机 ${pdSolo.delta} ms / 联机 ${pdOnline.delta} ms（stepMs ${pdOnline.stepMs} ms）`);
-  ck('★ payday 不弹事件：联机也不空等 500 ms',
-    pdOnline.delta === pdOnline.stepMs && pdOnline.delta < 500,
-    `${pdOnline.delta} vs ${pdOnline.stepMs}`);
+    hSlow.stepMs === hFast.stepMs && hSlow.stepMs > 0, `${hSlow.stepMs} vs ${hFast.stepMs}`);
+  ck('★ 同一时刻 AI 节奏确实按档位变了', hSlow.aiHold > hFast.aiHold * 5, `${hSlow.aiHold} vs ${hFast.aiHold}`);
 }
 
 /* ---------------- F 联机状态序列化 ---------------- */
