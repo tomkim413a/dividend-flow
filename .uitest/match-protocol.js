@@ -131,7 +131,57 @@ clean();
   ck('已开局的房从列表消失', M.listOpenRooms().every(x => x.id !== pub2.id));
 }
 
-console.log('\n===== D 协议兼容与禁区 =====');
+console.log('\n===== D 审查发现的边界缺陷（回归防线） =====');
+clean();
+{
+  const r = M.createRoom(mk('host'), '', 'relaxed');
+  M.joinRoom(r.id, mk('b'), '');
+  M.joinRoom(r.id, mk('c'), '');
+  const before = { cap: r.seatCap, ai: r.aiCount };
+  const bad = M.setRoomCfg(r.id, 'host', { seatCap: 2, aiCount: 'auto' });
+  ck('★ 3 位真人时把家数缩到 2（自动补满）被明确拒绝', !!bad.err, String(bad.err));
+  ck('★ 被拒后原设置不变、无人被踢',
+    r.seats.length === 3 && r.seatCap === before.cap && r.aiCount === before.ai,
+    JSON.stringify({ seats: r.seats.length, cap: r.seatCap, ai: r.aiCount }));
+  const g = M.startGame(r.id, () => {}, () => {});
+  ck('★ 仍能正常开局且第三位真人保留在座位上',
+    !g.err && g.room.seats.length === 4 && g.room.seats[2].userId === 'c',
+    g.err || g.room.seats.map(s => s.name).join(','));
+}
+
+clean();
+{
+  const r = M.createRoom(mk('host'), '', 'relaxed');
+  M.setRoomCfg(r.id, 'host', { seatCap: 3, aiCount: 1 });
+  const v = M.setRoomCfg(r.id, 'host', { visibility: 'public' });
+  ck('★ 只改公开/私密不重置家数与电脑数',
+    !v.err && r.seatCap === 3 && r.aiCount === 1 && r.visibility === 'public',
+    JSON.stringify({ cap: r.seatCap, ai: r.aiCount, vis: r.visibility }));
+  const v2 = M.setRoomCfg(r.id, 'host', { visibility: 'private' });
+  ck('★ 关回私密仍保持家数与电脑数',
+    !v2.err && r.seatCap === 3 && r.aiCount === 1 && r.visibility === 'private');
+}
+
+clean();
+{
+  const r = M.createRoom(mk('host'), '', 'relaxed');
+  M.joinRoom(r.id, mk('b'), '');
+  M.joinRoom(r.id, mk('c'), '');
+  /* 绕过 setRoomCfg 直接改内部字段，模拟异常路径：startGame 也不许 slice 丢人 */
+  r.seatCap = 2; r.aiCount = M.AI_AUTO;
+  const g = M.startGame(r.id, () => {}, () => {});
+  ck('★ 异常路径下 startGame 拒绝而不是静默丢人', !!g.err, String(g.err));
+}
+
+clean();
+{
+  ck('★ normCfg 认识 AI_AUTO(-1) 哨兵（不误判成 0 家电脑）',
+    M.normCfg({ seatCap: 4, aiCount: M.AI_AUTO }).aiCount === M.AI_AUTO);
+  ck('★ normCfg 仍把非法值安全收敛', M.normCfg({ aiCount: 'abc' }).aiCount === 0,
+    String(M.normCfg({ aiCount: 'abc' }).aiCount));
+}
+
+console.log('\n===== E 协议兼容与禁区 =====');
 ck('新增 CS 常量存在且旧值不变',
   CS.SET_ROOM_CFG === 'cs:setRoomCfg' && CS.LIST_ROOMS === 'cs:listRooms' &&
   CS.CREATE_ROOM === 'cs:createRoom' && CS.ROLL === 'cs:roll' && CS.RESUME === 'cs:resume');

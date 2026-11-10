@@ -19,7 +19,10 @@ const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 function normCfg(cfg) {
   const c = cfg || {};
   const seatCap = clamp(Math.floor(Number(c.seatCap) || MAX_SEATS), SEAT_CAP_MIN, MAX_SEATS);
-  const has = Object.prototype.hasOwnProperty.call(c, 'aiCount') && c.aiCount !== 'auto';
+  /* 'auto' 与内部哨兵 AI_AUTO(-1) 都表示「保持原版自动补满」，
+     否则单独传 visibility 时会把 -1 误判成「0 家电脑」并 clamp 掉。 */
+  const has = Object.prototype.hasOwnProperty.call(c, 'aiCount')
+    && c.aiCount !== 'auto' && c.aiCount !== AI_AUTO && Number(c.aiCount) !== AI_AUTO;
   if (!has) return { seatCap, aiCount: AI_AUTO };
   const n = Math.floor(Number(c.aiCount));
   return { seatCap, aiCount: Number.isFinite(n) ? clamp(n, 0, seatCap - 1) : 0 };
@@ -125,13 +128,23 @@ function setRoomCfg(roomId, userId, cfg) {
   if (!room) return { err: '房间不存在' };
   if (room.started) return { err: '对局已开始，无法修改房间设置' };
   if (room.hostId !== userId) return { err: '只有房主可以修改房间设置' };
-  const next = normCfg(cfg);
+  const c = cfg || {};
+  /* 只更新显式传入的字段：单独改公开/私密时，不能把家数与电脑数重置回默认 */
+  const next = normCfg({
+    seatCap: (c.seatCap != null && c.seatCap !== '') ? c.seatCap : room.seatCap,
+    aiCount: Object.prototype.hasOwnProperty.call(c, 'aiCount') ? c.aiCount : room.aiCount
+  });
   const humans = room.seats.filter(s => s.userId).length;
-  if (next.aiCount !== AI_AUTO && humans + next.aiCount > next.seatCap)
-    return { err: '真人数 + 电脑数不能超过总家数' };
+  const nextHumanCap = next.seatCap - (next.aiCount === AI_AUTO ? 0 : next.aiCount);
+  /* ★ 关键：房主缩小家数时，已坐在房里的真人不能被静默挤掉。
+     自动补满分支也要查——否则 startGame 的 slice() 会直接丢人。 */
+  if (humans > nextHumanCap) {
+    if (next.aiCount !== AI_AUTO) return { err: '真人数 + 电脑数不能超过总家数' };
+    return { err: '当前已有 ' + humans + ' 位真人，本局最多容纳 ' + nextHumanCap + ' 位，请先调大本局家数' };
+  }
   room.seatCap = next.seatCap;
   room.aiCount = next.aiCount;
-  if (cfg && (cfg.visibility === 'public' || cfg.visibility === 'private')) room.visibility = cfg.visibility;
+  if (c.visibility === 'public' || c.visibility === 'private') room.visibility = c.visibility;
   return { room };
 }
 
@@ -168,6 +181,9 @@ function startGame(roomId, onState, onOver) {
   if (room.started) return { err: '对局已经开始' };
 
   const cap = humanCapOf(room);
+  /* 双保险：任何路径下都不允许 slice() 静默丢掉已入座的真人 */
+  if (room.seats.length > cap)
+    return { err: '房间已有 ' + room.seats.length + ' 位真人，超过本局可容纳的 ' + cap + ' 位，请房主调整本局家数或电脑数' };
   const seats = room.seats.slice(0, cap);
   const aiNeed = (room.aiCount == null || room.aiCount === AI_AUTO)
     ? (room.seatCap || MAX_SEATS) - seats.length : room.aiCount;

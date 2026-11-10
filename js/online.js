@@ -528,7 +528,10 @@
     });
 
     NET.onEvent('roomList', list => {
-      if (list) matchEnabled = true;
+      /* 开关状态只由 /api/health 决定：开关关闭时服务端回的是空数组，
+         空数组在 JS 里是 truthy，不能据此把 UI 切成「已开启」，
+         否则 health 超时时会出现无标题、无勾选框的孤立列表。 */
+      if (!matchEnabled) return;
       const ul = el('lobby-open-rooms'), box = el('lobby-overlay');
       if (!ul || !matchEnabled || !box || box.classList.contains('hidden')) return;
       const rows = Array.isArray(list) ? list : [];
