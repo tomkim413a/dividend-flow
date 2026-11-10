@@ -187,13 +187,34 @@
 <div id="lobby-overlay" class="hidden">
   <div class="mback"><div class="mcard" style="max-width:420px">
     <h3>🏠 联机大厅</h3>
-    <div class="ol-row">房间号：<b id="lobby-roomno">—</b></div>
+    <div class="ol-row">房间号：<b id="lobby-roomno">—</b>
+      <button id="lobby-invite" class="btn ghost sm" type="button" title="复制邀请链接发给朋友">📋 复制邀请</button>
+    </div>
     <div class="speed-row">
       <span class="speed-label">🤖 AI 速度</span>
       <select id="lobby-speed" class="ol-select speed-select" data-speed-select title="房间内电脑玩家的出手与走格速度，开局后也能改"></select>
     </div>
     <div class="speed-hint" id="lobby-speed-hint"></div>
+    <div class="speed-row">
+      <span class="speed-label">👥 本局家数</span>
+      <select id="lobby-seatcap" class="ol-select" title="本局总家数（真人 + 电脑），至少 2 家">
+        <option value="4">4 家（标准）</option><option value="3">3 家</option><option value="2">2 家</option>
+      </select>
+    </div>
+    <div class="speed-row">
+      <span class="speed-label">🖥️ 电脑家数</span>
+      <select id="lobby-aicount" class="ol-select" title="房主预留的电脑数，其余位置留给真人">
+        <option value="auto">自动补满（原版）</option><option value="0">0 家</option>
+        <option value="1">1 家</option><option value="2">2 家</option><option value="3">3 家</option>
+      </select>
+    </div>
+    <div class="speed-hint" id="lobby-cfg-hint"></div>
+    <label id="lobby-public-row" class="ol-row" style="display:none;cursor:pointer">
+      <input type="checkbox" id="lobby-public"> 公开房间（允许陌生人从列表加入）
+    </label>
     <ul id="lobby-seats" class="ol-seats"></ul>
+    <div id="lobby-open-title" class="speed-hint" style="display:none">公开房间</div>
+    <ul id="lobby-open-rooms" class="ol-seats"></ul>
     <input id="lobby-roomid" class="ol-input" type="text" placeholder="输入房间号加入" autocomplete="off">
     <div id="lobby-msg" class="ol-msg"></div>
     <div class="ol-btns">
@@ -223,12 +244,12 @@
 <div id="coachbox" class="hidden"></div>
 
 <!-- ?v= 版本号：部署后浏览器立即拉新脚本，不用手动清缓存 -->
-<script src="js/data.js?v=20261109a"></script>
-<script src="js/engine.js?v=20261109a"></script>
-<script src="js/bgm.js?v=20261109a"></script>
-<script src="js/sfx.js?v=20261109a"></script>
-<script src="js/render.js?v=20261109a"></script>
-<script src="js/online.js?v=20261109a"></script>
-<script src="js/speed.js?v=20261109a"></script>
+<script src="js/data.js?v=20261109b"></script>
+<script src="js/engine.js?v=20261109b"></script>
+<script src="js/bgm.js?v=20261109b"></script>
+<script src="js/sfx.js?v=20261109b"></script>
+<script src="js/render.js?v=20261109b"></script>
+<script src="js/online.js?v=20261109b"></script>
+<script src="js/speed.js?v=20261109b"></script>
 </body>
 </html>

@@ -70,9 +70,13 @@ app.use(express.static(ROOT, {
 }));
 app.get('/protocol.js', (req, res) => res.sendFile(path.join(__dirname, 'protocol.js')));
 
+/* 公开房列表开关：默认 false —— 不开时线上行为与旧版完全一致。
+   出问题只需改环境变量重启即可回退，不用 revert、不用重新推送、不用挂代理。 */
+const MATCH_ENABLED = String(process.env.MATCH_ENABLED || '').toLowerCase() === 'true';
+
 /* ---------------- 健康检查（Render 探活 / 保活 ping 用） ---------------- */
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, db: db.getMode(), mailEnabled: auth.mailEnabled(), time: Date.now() });
+  res.json({ ok: true, db: db.getMode(), mailEnabled: auth.mailEnabled(), matchEnabled: MATCH_ENABLED, time: Date.now() });
   // 顺带保活 Gmail 凭据，避免半年无人找回密码导致 refresh_token 失效（不阻塞响应）
   mailer.keepAlive();
 });
@@ -258,6 +262,10 @@ function roomInfo(room) {
     hostId: room.hostId,
     started: !!room.started,
     speed: room.speed || roomMgr.DEFAULT_SPEED,   // 房间统一的 AI / 动画档位
+    seatCap: room.seatCap || 4,
+    aiCount: room.aiCount == null ? -1 : room.aiCount,
+    humanCap: roomMgr.humanCapOf(room),
+    visibility: room.visibility === 'public' ? 'public' : 'private',
     seats: room.seats.map(s => ({ userId: s.userId, name: s.name, ai: !!s.ai, prof: s.prof || '' }))
   };
 }
@@ -268,12 +276,27 @@ function currentRoomId(socket) {
   return null;
 }
 
+/* ★ 用 io.emit 全量广播，绝不用 socket.join('大厅')：
+   currentRoomId() 靠遍历 socket.rooms 推断房间号，多 join 一个字符串会让
+   SET_SPEED / START_GAME / 掷骰动作全部取错房间。 */
+let listTimer = null;
+function broadcastRoomList() {
+  if (!MATCH_ENABLED || listTimer) return;
+  listTimer = setTimeout(() => {
+    listTimer = null;
+    io.emit(SC.ROOM_LIST, roomMgr.listOpenRooms());
+  }, 100);
+}
+
 io.on('connection', socket => {
   /* 建房 */
   socket.on(CS.CREATE_ROOM, (data = {}) => {
-    const room = roomMgr.createRoom(socket.user, data.prof, data.speed);
+    const cfg = Object.assign({}, data);
+    if (!MATCH_ENABLED) delete cfg.visibility;   // 开关关闭时强制私密房
+    const room = roomMgr.createRoom(socket.user, data.prof, data.speed, cfg);
     socket.join(room.id);
     socket.emit(SC.ROOM, roomInfo(room));
+    broadcastRoomList();
   });
 
   /* 加房 */
@@ -282,6 +305,7 @@ io.on('connection', socket => {
     if (r.err) return socket.emit(SC.ERROR, { msg: r.err });
     socket.join(r.room.id);
     io.to(r.room.id).emit(SC.ROOM, roomInfo(r.room));
+    broadcastRoomList();
   });
 
   /* 离房 */
@@ -291,6 +315,7 @@ io.on('connection', socket => {
     socket.leave(roomId);
     const room = roomMgr.leaveRoom(roomId, socket.user.id);
     if (room) io.to(roomId).emit(SC.ROOM, roomInfo(room));
+    broadcastRoomList();
   });
 
   /* 开局前修改职业 */
@@ -305,10 +330,29 @@ io.on('connection', socket => {
   socket.on(CS.SET_SPEED, (d = {}) => {
     const roomId = currentRoomId(socket);
     if (!roomId) return socket.emit(SC.ERROR, { msg: '请先建房或加入房间' });
+    const rm = roomMgr.rooms.get(roomId);
+    if (rm && rm.visibility === 'public' && !rm.started && rm.hostId !== socket.user.id)
+      return socket.emit(SC.ERROR, { msg: '公开房仅房主可调整速度' });
     const r = roomMgr.setSpeed(roomId, socket.user.id, d.speed);
     if (r.err) return socket.emit(SC.ERROR, { msg: r.err });
     io.to(roomId).emit(SC.ROOM, roomInfo(r.room));
+    broadcastRoomList();
   });
+
+  /* 房间设置：仅房主、仅未开局；服务端权威，改完广播给全房 + 刷新列表 */
+  socket.on(CS.SET_ROOM_CFG, (d = {}) => {
+    const roomId = currentRoomId(socket);
+    if (!roomId) return socket.emit(SC.ERROR, { msg: '请先建房或加入房间' });
+    const cfg = Object.assign({}, d);
+    if (!MATCH_ENABLED) delete cfg.visibility;
+    const r = roomMgr.setRoomCfg(roomId, socket.user.id, cfg);
+    if (r.err) return socket.emit(SC.ERROR, { msg: r.err });
+    io.to(roomId).emit(SC.ROOM, roomInfo(r.room));
+    broadcastRoomList();
+  });
+
+  /* 公开房列表：只读查询；开关关闭时恒为空数组 */
+  socket.on(CS.LIST_ROOMS, () => socket.emit(SC.ROOM_LIST, MATCH_ENABLED ? roomMgr.listOpenRooms() : []));
 
   /* 开局（仅房主） */
   socket.on(CS.START_GAME, () => {
@@ -335,6 +379,7 @@ io.on('connection', socket => {
     if (r.err) return socket.emit(SC.ERROR, { msg: r.err });
     io.to(roomId).emit(SC.ROOM, roomInfo(r.room));
     io.to(roomId).emit(SC.STATE, r.room.game.state());
+    broadcastRoomList();
   });
 
   /* 断线重连：回到原座位并取消 AI 托管 */
@@ -374,6 +419,7 @@ io.on('connection', socket => {
     if (!roomId) return;
     const room = roomMgr.leaveRoom(roomId, socket.user.id);
     if (room) io.to(roomId).emit(SC.ROOM, roomInfo(room));
+    broadcastRoomList();
   });
 });
 

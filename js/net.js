@@ -104,6 +104,8 @@
         emit('error', msg);
       });
       s.on(SC.GAME_OVER, g => { saveRoom(''); NET.room = null; emit('over', g); });
+      /* 公开房列表：字面量兜底，兼容浏览器缓存里的旧 protocol.js */
+      s.on(SC.ROOM_LIST || 'sc:roomList', list => emit('roomList', list));
 
       s.on('connect', () => {
         clearTimeout(timer);

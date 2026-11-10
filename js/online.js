@@ -25,6 +25,40 @@
   const setLastUser = n => { try { n ? localStorage.setItem(LAST_USER, n) : localStorage.removeItem(LAST_USER); } catch (e) {} };
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+  /* 邀请链接 ?room=ABC123 只携带房间号；房间设置存在服务端，跟着房间走、不编码进 URL。
+     invitePending 保证两条登录路径（无 token 弹登录框 / 有 token 校验 /api/me）都只发一次 JOIN。 */
+  const INVITE_ROOM = (() => {
+    let v = '';
+    try {
+      const search = (typeof location !== 'undefined' && location.search) ? String(location.search) : '';
+      const m = /(?:^|[?&])room=([^&#]*)/.exec(search);
+      if (m) v = decodeURIComponent(m[1]);
+    } catch (e) { v = ''; }
+    return /^[A-Z2-9]{6}$/i.test(v) ? v.toUpperCase() : '';
+  })();
+  let invitePending = !!INVITE_ROOM;
+  let matchEnabled = false;
+
+  function fallbackCopy(text) {
+    try {
+      const t = document.createElement('textarea');
+      t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+      document.body.appendChild(t); t.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(t);
+      lobbyMsg(ok ? '✅ 邀请链接已复制，发给朋友即可加入' : '⚠️ 复制失败，请手动复制：' + text, ok);
+    } catch (e) { lobbyMsg('⚠️ 复制失败，请手动复制：' + text); }
+  }
+
+  function applyMatchUI() {
+    const row = el('lobby-public-row'), title = el('lobby-open-title');
+    if (row) row.style.display = matchEnabled ? '' : 'none';
+    if (title) title.style.display = matchEnabled ? '' : 'none';
+    if (matchEnabled && window.NET && NET.on)
+      NET.send((window.CS && CS.LIST_ROOMS) || 'cs:listRooms');
+    else { const ul = el('lobby-open-rooms'); if (ul) ul.innerHTML = ''; }
+  }
+
   /* 所有请求都带超时：fetch 默认永不超时，冷启动时挂住会表现为「点了没反应」 */
   function fetchT(url, opts, ms) {
     const ctrl = new AbortController();
@@ -91,7 +125,7 @@
   /* ---------------- 联机组件：后台顺序加载 ----------------
      顺序加载最稳：protocol.js → socket.io → net.js，后者依赖前者的 CS/SC/io。
      全程后台、失败可重试，不再阻塞登录框，也不再弹「加载超时」alert。 */
-  const SCRIPTS = ['/protocol.js', '/socket.io/socket.io.js', 'js/net.js?v=20261109a'];
+  const SCRIPTS = ['/protocol.js?v=20261109b', '/socket.io/socket.io.js', 'js/net.js?v=20261109b'];
   let scriptsPromise = null;
   function loadScripts() {
     if (scriptsPromise) return scriptsPromise;
@@ -147,13 +181,30 @@
     netPromise = loadScripts()
       .then(() => {
         if (!window.NET) throw new Error('联机组件未就绪，请刷新页面');
+        /* 邀请链接：必须在 NET.connect() 之前清掉上次的房间号，否则 connect 事件
+           会先发 CS.RESUME 回旧房，一个 socket 同时 join 两个房间，currentRoomId 取错。 */
+        if (invitePending) {
+          try { sessionStorage.removeItem('cf_online_room'); } catch (e) {}
+          if (window.NET) NET.room = null;
+        }
         return NET.connect(getToken(), currentUser);
       })
       .then(() => {
         bindNetEvents();
         bindLobbyButtons();
+        applyMatchUI();
         setLobbyBusy(false);
         lobbyMsg('');
+        if (invitePending) {
+          invitePending = false;
+          NET.send((window.CS && CS.JOIN_ROOM) || 'cs:joinRoom',
+            { roomId: INVITE_ROOM, prof: el('lobby-prof') ? el('lobby-prof').value : '' });
+          try {
+            const u = new URL(location.href);
+            u.searchParams.delete('room');
+            history.replaceState(null, '', u.pathname + u.search);
+          } catch (e) {}   // 清参数失败不影响已发出的 JOIN_ROOM
+        }
         return NET;
       })
       .catch(e => {
@@ -331,6 +382,12 @@
     if (seats) seats.innerHTML = '';
     lobbyMsg('⏳ 正在连接房间服务…');
     setLobbyBusy(true);
+    const cap0 = el('lobby-seatcap'), ai0 = el('lobby-aicount'), pub0 = el('lobby-public');
+    if (cap0) cap0.value = '4';
+    if (ai0) ai0.value = 'auto';
+    if (pub0) pub0.checked = false;
+    const cfgHint0 = el('lobby-cfg-hint');
+    if (cfgHint0) cfgHint0.textContent = '房主可设置本局家数与电脑数；默认与原版一致（4 家自动补满）';
 
     /* 房间速度：联机由服务端权威引擎决定，客户端只发指令 + 同步显示。
        setHandler 让三个速度下拉（开始界面 / 顶栏 / 大厅）统一走网络分支。 */
@@ -432,6 +489,24 @@
       const start = el('lobby-start');
       const isHost = !!(currentUser && r.hostId === currentUser.id);
       if (start) start.disabled = !isHost;
+      /* 房间设置以服务端为准；非房主 / 已开局一律置灰 */
+      const cap = el('lobby-seatcap'), ai = el('lobby-aicount'), pub = el('lobby-public');
+      const capV = String(r.seatCap || 4);
+      const aiV = (r.aiCount == null || r.aiCount < 0) ? 'auto' : String(r.aiCount);
+      if (cap) { cap.value = capV; cap.disabled = !isHost || !!r.started; }
+      if (ai) { ai.value = aiV; ai.disabled = !isHost || !!r.started; }
+      if (pub) { pub.checked = r.visibility === 'public'; pub.disabled = !isHost || !!r.started; }
+      const humans = (r.seats || []).filter(s => s && s.userId).length;
+      const humanCap = Number(r.humanCap) || Number(capV);
+      const left = Math.max(0, humanCap - humans);
+      const h = el('lobby-cfg-hint');
+      if (h) h.textContent = `本局 ${capV} 家 · 电脑 ${aiV === 'auto' ? '自动补满' : aiV + ' 家'} · 真人 ${humans}/${humanCap}`
+        + (r.started ? ' · 对局进行中' : ` · 还可进 ${left} 人`);
+      const inv = el('lobby-invite');
+      if (inv) {
+        inv.disabled = !r.id || !!r.started || left === 0;
+        inv.textContent = left === 0 ? '📋 真人位已满' : `📋 复制邀请（还可进 ${left} 人）`;
+      }
       // 房间速度以服务端为准：广播回来后校准三个下拉，避免各客户端显示不一致
       if (window.SpeedUI) {
         if (r.speed) SpeedUI.syncFromServer(r.speed);
@@ -448,6 +523,32 @@
       /* ★ 对局中绝不用 window.alert：它会冻结浏览器主线程，引擎定时器、
          socket 收包和所有按钮一起停摆，用户看到的就是「画面卡住」。 */
       else netToast(text, false, 3500);
+      if (matchEnabled && /真人位已满|房间已满|对局已开始|房间不存在/.test(String(m || '')))
+        NET.send((window.CS && CS.LIST_ROOMS) || 'cs:listRooms');
+    });
+
+    NET.onEvent('roomList', list => {
+      if (list) matchEnabled = true;
+      const ul = el('lobby-open-rooms'), box = el('lobby-overlay');
+      if (!ul || !matchEnabled || !box || box.classList.contains('hidden')) return;
+      const rows = Array.isArray(list) ? list : [];
+      if (!rows.length) {
+        ul.innerHTML = '<li><small>暂无公开房间，可自己建一间并勾选「公开房间」</small></li>';
+        return;
+      }
+      ul.innerHTML = rows.map(r =>
+        `<li>${esc(r.id)} · 真人 ${r.count}/${r.humanCap} · ${r.speed === 'slow' ? '🐢 慢速' : '⚡ 快速'}` +
+        ` <button class="btn sm" type="button" data-join-room="${esc(r.id)}">加入</button></li>`).join('');
+      ul.querySelectorAll('[data-join-room]').forEach(b => {
+        b.onclick = () => {
+          const target = b.getAttribute('data-join-room');
+          const cur = window.NET && NET.room && NET.room.id;
+          /* 已在别的房间：socket.join 不会自动退旧房，必须先发现有的 LEAVE_ROOM */
+          if (cur && cur !== target) NET.send((window.CS && CS.LEAVE_ROOM) || 'cs:leaveRoom');
+          NET.send((window.CS && CS.JOIN_ROOM) || 'cs:joinRoom',
+            { roomId: target, prof: el('lobby-prof') ? el('lobby-prof').value : '' });
+        };
+      });
     });
 
     NET.onEvent('state', st => {
@@ -506,10 +607,33 @@
       try { sessionStorage.setItem('cf_online_prof', profSel.value); } catch (e) {}
       NET.send(CS.SET_PROF, { prof: profSel.value });
     };
-    el('lobby-create').onclick = () => NET.send(CS.CREATE_ROOM, {
+    const cfgNow = () => ({
+      seatCap: el('lobby-seatcap') ? el('lobby-seatcap').value : '4',
+      aiCount: el('lobby-aicount') ? el('lobby-aicount').value : 'auto',
+      visibility: el('lobby-public') && el('lobby-public').checked ? 'public' : 'private'
+    });
+    el('lobby-create').onclick = () => NET.send(CS.CREATE_ROOM, Object.assign({
       prof: profVal(),
       speed: window.SpeedUI ? SpeedUI.current() : undefined   // 建房时把当前档位带上去
+    }, cfgNow()));
+    ['lobby-seatcap', 'lobby-aicount', 'lobby-public'].forEach(id => {
+      const n = el(id);
+      if (n) n.onchange = () => {
+        if (window.NET && NET.room && NET.room.id)
+          NET.send((window.CS && CS.SET_ROOM_CFG) || 'cs:setRoomCfg', cfgNow());
+        else lobbyMsg('先建房或加入房间，再调整房间设置');
+      };
     });
+    const invBtn = el('lobby-invite');
+    if (invBtn) invBtn.onclick = () => {
+      const id = window.NET && NET.room && NET.room.id;
+      if (!id) { lobbyMsg('请先建房'); return; }
+      const url = location.origin + location.pathname + '?room=' + encodeURIComponent(id);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url)
+          .then(() => lobbyMsg('✅ 邀请链接已复制，发给朋友即可加入', true), () => fallbackCopy(url));
+      } else fallbackCopy(url);
+    };
     el('lobby-join').onclick = () => {
       const id = String((el('lobby-roomid').value || '')).trim().toUpperCase();
       if (!id) { lobbyMsg('请输入房间号'); return; }
@@ -534,7 +658,11 @@
        都不等待、都不改按钮文字、都不弹任何提示，因此不会造成加载超时。 */
     setTimeout(() => {
       try { loadScripts().catch(() => {}); } catch (e) {}
-      try { fetchT('/api/health?boot=' + Date.now(), { cache: 'no-store' }, 8000).catch(() => {}); } catch (e) {}
+      try {
+        fetchT('/api/health?boot=' + Date.now(), { cache: 'no-store' }, 8000)
+          .then(r => r.json()).then(j => { matchEnabled = !!(j && j.matchEnabled); applyMatchUI(); })
+          .catch(() => {});
+      } catch (e) {}
     }, 300);
 
     /* 页面开着期间每 10 分钟 ping 一次，避免 15 分钟无请求被 Render 休眠 */
@@ -547,6 +675,8 @@
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') ping(); });
 
     b.addEventListener('click', () => window.startOnline());
+    /* 邀请链接：等价于自动点一次「联机对战」，登录态分叉由 invitePending 统一收口 */
+    if (INVITE_ROOM) setTimeout(() => window.startOnline(), 0);
   });
 
   let starting = false;
