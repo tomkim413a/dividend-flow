@@ -29,7 +29,8 @@ const SC = {
   ERROR:       'sc:error',           // 错误提示 { msg }
   GAME_OVER:   'sc:gameOver',        // 对局结束 { winner }
   NOTICE:      'sc:notice',          // 一般通知 { msg }
-  ROOM_LIST:   'sc:roomList'         // 公开房列表（只读、脱敏）
+  ROOM_LIST:   'sc:roomList',        // 公开房列表（只读、脱敏）
+  ROOM_ENDED:  'sc:roomEnded'        // 本局终止（房内已无真人）{ msg }
 };
 
 if (typeof module !== 'undefined' && module.exports) {

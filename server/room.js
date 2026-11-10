@@ -184,7 +184,24 @@ function giveUp(roomId, userId) {
   if (seat.gaveUp) return { err: '你已放弃本局' };
   seat.gaveUp = true;
   leaveRoom(room.id, userId);          // 复用托管逻辑，不复制引擎操作
-  return { room };
+
+  /* 还有真人就继续：若走的是房主，把房主转给下一位真人。
+     一个真人都不剩才终止整局（否则只剩 AI 空跑，白占资源）。
+     注意：掉线托管的真人仍算「在」——他没主动放弃，随时能 RESUME 回来。 */
+  const alive = room.seats.filter(s => s.userId && !s.gaveUp);
+  if (!alive.length) {
+    if (room.game && room.game.stop) room.game.stop();   // 真正停掉引擎定时器
+    room.terminated = true;
+    rooms.delete(room.id);
+    return { room, terminated: true, hostTransferred: false, msg: '房内已无真人玩家' };
+  }
+  let hostTransferred = false;
+  if (room.hostId === userId) {
+    room.hostId = alive[0].userId;
+    hostTransferred = true;
+  }
+  return { room, terminated: false, hostTransferred,
+    msg: hostTransferred ? '房主已转让，对局继续' : '' };
 }
 
 /**

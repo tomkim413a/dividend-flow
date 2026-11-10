@@ -104,6 +104,11 @@
         emit('error', msg);
       });
       s.on(SC.GAME_OVER, g => { saveRoom(''); NET.room = null; emit('over', g); });
+      /* 本局终止（房内已无真人）：清座位持久化；保持 onlineMode，绝不回落到本地引擎 */
+      s.on(SC.ROOM_ENDED || 'sc:roomEnded', info => {
+        saveRoom(''); NET.room = null;
+        emit('roomEnded', info || {});
+      });
       /* 公开房列表：字面量兜底，兼容浏览器缓存里的旧 protocol.js */
       s.on(SC.ROOM_LIST || 'sc:roomList', list => emit('roomList', list));
 

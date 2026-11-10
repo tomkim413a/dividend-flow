@@ -331,9 +331,15 @@ io.on('connection', socket => {
     const r = roomMgr.giveUp(roomId, socket.user.id);
     if (r.err) return done({ ok: false, msg: r.err });
     socket.leave(roomId);
-    io.to(roomId).emit(SC.ROOM, roomInfo(r.room));
+    if (r.terminated) {
+      /* 房内已无真人：只发终止事件，不走 GAME_OVER / onOver，终止局不记战绩 */
+      io.to(roomId).emit(SC.ROOM_ENDED, { msg: r.msg || '房内已无真人玩家' });
+    } else {
+      io.to(roomId).emit(SC.ROOM, roomInfo(r.room));   // 含转让后的新 hostId
+    }
     broadcastRoomList();
-    done({ ok: true, msg: '你已放弃本局，座位由电脑接管' });
+    done({ ok: true, terminated: !!r.terminated, hostTransferred: !!r.hostTransferred,
+      msg: r.terminated ? '房内已无真人，本局已终止' : '你已放弃本局，座位由电脑接管' });
   });
 
   /* 开局前修改职业 */

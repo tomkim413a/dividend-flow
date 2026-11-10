@@ -481,6 +481,14 @@
   function askGiveUp(fn) {
     const b = el('giveup-overlay');
     if (!b || !inOnlineGame()) { if (fn) fn(); return; }
+    const hint = el('giveup-host-hint');
+    if (hint) {
+      const isHost = !!(currentUser && window.NET && NET.room &&
+        NET.room.hostId === currentUser.id);
+      hint.textContent = isHost
+        ? '你是房主：房内还有其他真人时，房主将转让给他们、对局继续；若已无其他真人，本局终止。'
+        : '';
+    }
     giveupAction = fn;
     b.classList.remove('hidden');
   }
@@ -637,6 +645,17 @@
     NET.onEvent('over', info => {
       netToast('');
       if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.over(info);
+    });
+
+    /* 本局终止（房内已无真人）：给明确提示 + 打开大厅让人重新建房 / 加入。
+       不刷新页面、也不回落到本地引擎 —— 服务端对局已作废，本地推进会状态分叉。 */
+    NET.onEvent('roomEnded', info => {
+      const msg = (info && info.msg) || '房内已无真人玩家';
+      netToast('本局已终止：' + msg + '，可以重新建房或加入其他房间', false, 8000);
+      const no = el('lobby-roomno'); if (no) no.textContent = '—';
+      const seats = el('lobby-seats'); if (seats) seats.innerHTML = '';
+      const box = el('lobby-overlay'); if (box) box.classList.remove('hidden');
+      if (matchEnabled) NET.send((window.CS && CS.LIST_ROOMS) || 'cs:listRooms');
     });
 
     /* ---------------- 断线 / 重连：全程可见，绝不静默 ----------------

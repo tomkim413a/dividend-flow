@@ -42,7 +42,10 @@ function createGame(seats, onState, onOver, opts) {
   const cfg = buildCfg(CF, seats);
 
   let ended = false;
+  let stopped = false;
   Engine.setRender(() => {
+    /* 本局被终止（房内已无真人）：不再广播 STATE、也不再触发 onOver 结算 */
+    if (stopped) return;
     const S = Engine.state();
     if (!S) return;
     const sfx = takeSfx();                 // 本批音效事件（下发给客户端播放）
@@ -68,7 +71,20 @@ function createGame(seats, onState, onOver, opts) {
     /** 对局中改速度：引擎持有 CF.TIMING 引用，改属性后下一手立即按新节奏走 */
     setSpeed: k => CF.applySpeed(k),
     state: () => { const S = Engine.state(); return S ? snapshot(S) : null; },
-    isOver: () => !!(Engine.state() && Engine.state().over)
+    isOver: () => !!(Engine.state() && Engine.state().over),
+    /** 终止整局：清掉引擎的两个定时器槽（AI 回合 / 走格），阻止 AI 空跑与残留广播。
+        沙箱注入的是宿主的 setTimeout，所以宿主 clearTimeout 能直接清掉。 */
+    stop: () => {
+      if (stopped) return;
+      stopped = true;
+      try {
+        clearTimeout(Engine._timer);
+        clearTimeout(Engine._walkTimer);
+        Engine._timer = null;
+        Engine._walkTimer = null;
+        Engine._coachDeferred = null;
+      } catch (e) { /* 清不掉也至少有 stopped 标志挡住广播与结算 */ }
+    }
   };
 }
 

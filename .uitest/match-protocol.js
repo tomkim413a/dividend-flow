@@ -18,10 +18,12 @@ const read = p => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
 /* createGame 会启动真实引擎定时器，桩掉它，只观察 room.js 的座位逻辑 */
 const grPath = require.resolve(path.join(ROOT, 'server', 'gameRunner'));
+let stopCalls = 0;
 const fakeGame = {
   CF: { TIMING: {} },
   Engine: { state: () => ({ players: [] }), resume: () => {} },
-  setSpeed: () => {}, state: () => ({})
+  setSpeed: () => {}, state: () => ({}),
+  stop: () => { stopCalls++; }
 };
 require.cache[grPath] = {
   id: grPath, filename: grPath, loaded: true,
@@ -245,6 +247,59 @@ ck('★ 掉线路径绝不标记放弃（disconnect 段没有 giveUp）',
   discSeg.length > 0 && !/giveUp\(|GIVE_UP/.test(discSeg.slice(0, 400)));
 ck('★ 放弃后 RESUME 报错会清掉本地房间号（不反复弹错）', netSrc.includes('已主动放弃'));
 ck('★ 新协议常量与旧值共存', CS.GIVE_UP === 'cs:giveUp' && CS.RESUME === 'cs:resume');
+
+console.log('\n===== G 房主退出：有真人则转让继续，无真人则终止 =====');
+const grSrc = read('server/gameRunner.js');
+clean();
+{
+  const r = M.createRoom(mk('host'), '', 'relaxed');
+  M.joinRoom(r.id, mk('b'), '');
+  M.startGame(r.id, () => {}, () => {});
+  stopCalls = 0;
+  const g = M.giveUp(r.id, 'host');
+  ck('★ 房主放弃但还有真人：不终止，房主转让给下一位真人',
+    !g.err && g.terminated === false && g.hostTransferred === true && r.hostId === 'b',
+    JSON.stringify({ term: g.terminated, trans: g.hostTransferred, host: r.hostId }));
+  ck('★ 对局继续：房间仍在、引擎未 stop、接任者可正常回座',
+    M.rooms.has(r.id) && stopCalls === 0 && !M.resume(r.id, 'b').err,
+    JSON.stringify({ inRooms: M.rooms.has(r.id), stops: stopCalls }));
+  ck('★ 房主权限真的转移（对局中新房主可改速、旧房主被拒）',
+    !M.setSpeed(r.id, 'b', 'slow').err && !!M.setSpeed(r.id, 'host', 'relaxed').err,
+    'b=允许 / host=拒绝');
+}
+clean();
+{
+  const r = M.createRoom(mk('solo'), '', 'relaxed');
+  M.startGame(r.id, () => {}, () => {});      // 1 真人 + 3 AI
+  stopCalls = 0;
+  const g = M.giveUp(r.id, 'solo');
+  ck('★ 房主是唯一真人：终止整局、删除房间、真正停掉引擎',
+    !g.err && g.terminated === true && !M.rooms.has(r.id) && stopCalls === 1,
+    JSON.stringify({ term: g.terminated, inRooms: M.rooms.has(r.id), stops: stopCalls }));
+}
+clean();
+{
+  const r = M.createRoom(mk('host'), '', 'relaxed');
+  M.joinRoom(r.id, mk('b'), '');
+  M.startGame(r.id, () => {}, () => {});
+  M.leaveRoom(r.id, 'b');                     // b 只是掉线，不算主动放弃
+  const g = M.giveUp(r.id, 'host');
+  ck('★ 掉线托管的真人仍算「在」：房主放弃后不终止、房主转给他',
+    g.terminated === false && g.hostTransferred === true && r.hostId === 'b',
+    JSON.stringify({ term: g.terminated, host: r.hostId }));
+}
+ck('★ gameRunner 提供 stop() 且清掉两个定时器槽、挡住残留广播',
+  grSrc.includes('stop: () =>') && grSrc.includes('clearTimeout(Engine._timer)') &&
+  grSrc.includes('clearTimeout(Engine._walkTimer)') && grSrc.includes('if (stopped) return;'));
+ck('★ 终止局不发 GAME_OVER 结算、不记战绩',
+  idxSrc.includes('if (r.terminated)') && idxSrc.includes('io.to(roomId).emit(SC.ROOM_ENDED') &&
+  !/if \(r\.terminated\)[\s\S]{0,200}Stats\.record/.test(idxSrc));
+ck('★ 客户端收到终止事件后清房间号、不回落本地引擎',
+  netSrc.includes("SC.ROOM_ENDED || 'sc:roomEnded'") && netSrc.includes("saveRoom('')") &&
+  !/roomEnded[\s\S]{0,300}onlineMode = false/.test(onSrc));
+ck('★ 房主确认框会额外说明转让 / 终止规则',
+  html.includes('id="giveup-host-hint"') && onSrc.includes('你是房主：房内还有其他真人时'));
+ck('★ 新 SC 常量与旧值共存', SC.ROOM_ENDED === 'sc:roomEnded' && SC.GAME_OVER === 'sc:gameOver');
 
 console.log(`\n========================================\n  房间匹配回归：${pass} 通过 / ${fail} 失败\n========================================`);
 process.exit(fail ? 1 : 0);
