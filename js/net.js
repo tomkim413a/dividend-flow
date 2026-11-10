@@ -93,8 +93,8 @@
       s.on(SC.STATE, st => { NET.state = st; resumePending = false; emit('state', st); });
       s.on(SC.ERROR, e => {
         const msg = e && e.msg;
-        if (resumePending && /房间不存在|不在这个房间|对局已结束/.test(String(msg || ''))) {
-          // 旧房间已销毁：清掉持久化，静默忽略，不打扰玩家
+        if (resumePending && /房间不存在|不在这个房间|对局已结束|已主动放弃/.test(String(msg || ''))) {
+          // 旧房间已销毁 / 本人已确认放弃：清掉持久化，静默忽略，不打扰玩家
           resumePending = false;
           NET.room = null;
           saveRoom('');

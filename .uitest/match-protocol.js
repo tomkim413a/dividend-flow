@@ -190,7 +190,8 @@ ck('新增 SC 常量存在且旧值不变',
 const idxSrc = read('server/index.js'), netSrc = read('js/net.js'), onSrc = read('js/online.js');
 ck('列表广播用 io.emit，未 join 大厅房间（不破坏 currentRoomId）',
   idxSrc.includes('io.emit(SC.ROOM_LIST') && !/__lobby__|socket\.join\(['"]lobby/.test(idxSrc));
-ck('MATCH_ENABLED 默认关闭', /process\.env\.MATCH_ENABLED \|\| ''\)\.toLowerCase\(\) === 'true'/.test(idxSrc));
+ck('★ 第二部分默认可见：MATCH_ENABLED 默认开启、可用环境变量一键关闭',
+  /process\.env\.MATCH_ENABLED \|\| 'true'\)\.toLowerCase\(\) !== 'false'/.test(idxSrc));
 ck('health 返回 matchEnabled', idxSrc.includes('matchEnabled: MATCH_ENABLED'));
 ck('net.js 对旧缓存 protocol.js 有字面量兜底', netSrc.includes("SC.ROOM_LIST || 'sc:roomList'"));
 ck('邀请链接在 connectNet 成功后才发 JOIN_ROOM',
@@ -200,6 +201,50 @@ const invLine = onSrc.split('\n').find(l => l.includes("'?room=' + encodeURIComp
 ck('邀请链接只带房间号，不带人数/AI/token',
   /encodeURIComponent\(id\)/.test(invLine) && !/seatCap|aiCount|token/.test(invLine), invLine.trim());
 ck('一键加入复用现有 JOIN_ROOM', onSrc.includes("data-join-room") && onSrc.includes('CS.JOIN_ROOM'));
+
+console.log('\n===== F 确认式放弃：掉线 ≠ 主动退出 =====');
+clean();
+{
+  const r = M.createRoom(mk('host'), '', 'relaxed');
+  M.joinRoom(r.id, mk('b'), '');
+  M.startGame(r.id, () => {}, () => {});
+  const seatB = r.seats.find(s => s.userId === 'b');
+  M.leaveRoom(r.id, 'b');                       // 模拟 socket 掉线
+  ck('★ 掉线只托管 AI、不打放弃标记', seatB.ai === true && !seatB.gaveUp,
+    JSON.stringify({ ai: seatB.ai, gaveUp: !!seatB.gaveUp }));
+  const back = M.resume(r.id, 'b');
+  ck('★ 掉线重连 RESUME 能回到真人座位',
+    !back.err && back.seatIndex === 1 && seatB.ai === false, String(back.err || 'ok'));
+  const g = M.giveUp(r.id, 'b');
+  ck('★ 确认放弃后标记 gaveUp、座位交给 AI',
+    !g.err && seatB.gaveUp === true && seatB.ai === true, String(g.err || 'ok'));
+  ck('★ 放弃不改家数 / 资产 / 胜负规则（seats 长度不变、旁人照常）',
+    r.seats.length === 4 && r.seats.filter(s => s.ai).length === 3 && !M.resume(r.id, 'host').err,
+    JSON.stringify(r.seats.map(s => s.name)));
+  const denied = M.resume(r.id, 'b');
+  ck('★ 确认放弃后 RESUME 被拒（本局无法再回座位）',
+    !!denied.err && /已主动放弃/.test(denied.err), String(denied.err));
+  ck('★ 重复放弃有明确提示', /已放弃本局/.test(String(M.giveUp(r.id, 'b').err || '')));
+}
+clean();
+{
+  const r = M.createRoom(mk('h'), '', 'relaxed');
+  ck('★ 未开局不能点「放弃」', /尚未开始/.test(String(M.giveUp(r.id, 'h').err || '')));
+}
+const html = read('index.html');
+ck('★ 确认式退出对话框存在且含「继续游戏 / 确定放弃」',
+  html.includes('id="giveup-overlay"') && html.includes('id="giveup-cancel"') &&
+  html.includes('id="giveup-confirm"') && html.includes('游戏正在进行中'));
+ck('★ 对话框层级高于联机大厅（不会被盖住）', /#giveup-overlay\{z-index:110\}/.test(html));
+ck('★ 用 DOM 对话框，不在对局中调用阻塞式 window.confirm',
+  !/window\.confirm\(/.test(onSrc) && onSrc.includes("el('giveup-cancel')"));
+ck('★ 局中「退出 / 退出游戏」用捕获阶段拦截（不改 render.js）',
+  onSrc.includes("['btn-quit', 'btn-exit']") && onSrc.includes(', true);'));
+const discSeg = idxSrc.slice(idxSrc.indexOf("socket.on('disconnect'"));
+ck('★ 掉线路径绝不标记放弃（disconnect 段没有 giveUp）',
+  discSeg.length > 0 && !/giveUp\(|GIVE_UP/.test(discSeg.slice(0, 400)));
+ck('★ 放弃后 RESUME 报错会清掉本地房间号（不反复弹错）', netSrc.includes('已主动放弃'));
+ck('★ 新协议常量与旧值共存', CS.GIVE_UP === 'cs:giveUp' && CS.RESUME === 'cs:resume');
 
 console.log(`\n========================================\n  房间匹配回归：${pass} 通过 / ${fail} 失败\n========================================`);
 process.exit(fail ? 1 : 0);

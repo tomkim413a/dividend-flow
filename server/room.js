@@ -172,6 +172,21 @@ function leaveRoom(roomId, userId) {
   return room;
 }
 
+/** 主动放弃：仅由 CS.GIVE_UP 触发（用户已点过确认对话框）。
+ *  与断线托管的区别只有一个 gaveUp 标记：掉线可 RESUME 回来，放弃则不行。
+ *  座位保留、职业保留、AI 继续跑到终局；绝不改玩家人数 / 资产 / 胜负规则。 */
+function giveUp(roomId, userId) {
+  const room = rooms.get(String(roomId || '').toUpperCase());
+  if (!room) return { err: '房间不存在' };
+  if (!room.started) return { err: '对局尚未开始，无需放弃' };
+  const seat = room.seats.find(s => s.userId === userId);
+  if (!seat) return { err: '你不在本局座位中' };
+  if (seat.gaveUp) return { err: '你已放弃本局' };
+  seat.gaveUp = true;
+  leaveRoom(room.id, userId);          // 复用托管逻辑，不复制引擎操作
+  return { room };
+}
+
 /**
  * 开局：不足 4 家用 AI 补齐（AI 随机职业）
  */
@@ -208,6 +223,7 @@ function resume(roomId, userId) {
   if (idx < 0) return { err: '你不在这个房间' };
 
   const seat = room.seats[idx];
+  if (seat.gaveUp) return { err: '你已主动放弃本局，无法返回座位' };
   seat.ai = false;
   const S = room.game && room.game.Engine.state();
   const p = S && S.players && S.players[idx];
@@ -229,5 +245,5 @@ function listOpenRooms() {
 }
 
 module.exports = { rooms, MAX_SEATS, SEAT_CAP_MIN, AI_AUTO, normCfg, humanCapOf,
-  createRoom, joinRoom, setProf, setSpeed, setRoomCfg, leaveRoom, startGame, resume,
+  createRoom, joinRoom, setProf, setSpeed, setRoomCfg, leaveRoom, giveUp, startGame, resume,
   listOpenRooms, DEFAULT_SPEED };

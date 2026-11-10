@@ -13,8 +13,10 @@
   #topbar .bgm-vol{width:74px}
   /* 联机浮层：与 #modal 相同的全屏遮罩定位（z-index 更高，保证盖在最上层）
      注：.hidden 是 display:none!important，优先级高于 ID 选择器，隐藏照常生效 */
-  #auth-overlay,#lobby-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:90;
+  #auth-overlay,#lobby-overlay,#giveup-overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:90;
     display:flex;align-items:center;justify-content:center;padding:20px}
+  /* 放弃确认框必须盖在联机大厅之上 */
+  #giveup-overlay{z-index:110}
   /* 联机：登录框与大厅 */
   .ol-input{display:block;width:100%;margin:8px 0;padding:9px 12px;border-radius:8px;
     border:1px solid #3a4a63;background:#131c2b;color:#e8eef7;font-size:14px;box-sizing:border-box}
@@ -229,6 +231,23 @@
   </div></div>
 </div>
 
+<!-- 联机对局中主动退出：确认式放弃对话框。掉线只走 disconnect + AI 托管，绝不弹这里 -->
+<div id="giveup-overlay" class="hidden">
+  <div class="mback"><div class="mcard" style="max-width:420px">
+    <h3>⚠️ 游戏正在进行中</h3>
+    <div class="ol-hint" style="margin:10px 0 16px;line-height:1.7">
+      确定要放弃本局吗？<br>
+      点「确定放弃」后，你的座位交给电脑接管，本局<b>无法再回到这个座位</b>；<br>
+      其他玩家可以继续把这局玩完。<br>
+      <small>如果只是网络断开，直接重连就能回到座位，不用点这里。</small>
+    </div>
+    <div class="ol-btns">
+      <button id="giveup-cancel" class="btn primary" type="button">继续游戏</button>
+      <button id="giveup-confirm" class="btn ghost" type="button">确定放弃</button>
+    </div>
+  </div></div>
+</div>
+
 <div id="toast"></div>
 
 <!-- 事件日志（常驻节点：内容随每次渲染实时刷新，打开即最新） -->
@@ -244,12 +263,12 @@
 <div id="coachbox" class="hidden"></div>
 
 <!-- ?v= 版本号：部署后浏览器立即拉新脚本，不用手动清缓存 -->
-<script src="js/data.js?v=20261109b"></script>
-<script src="js/engine.js?v=20261109b"></script>
-<script src="js/bgm.js?v=20261109b"></script>
-<script src="js/sfx.js?v=20261109b"></script>
-<script src="js/render.js?v=20261109b"></script>
-<script src="js/online.js?v=20261109b"></script>
-<script src="js/speed.js?v=20261109b"></script>
+<script src="js/data.js?v=20261109c"></script>
+<script src="js/engine.js?v=20261109c"></script>
+<script src="js/bgm.js?v=20261109c"></script>
+<script src="js/sfx.js?v=20261109c"></script>
+<script src="js/render.js?v=20261109c"></script>
+<script src="js/online.js?v=20261109c"></script>
+<script src="js/speed.js?v=20261109c"></script>
 </body>
 </html>

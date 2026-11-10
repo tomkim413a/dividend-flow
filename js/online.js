@@ -125,7 +125,7 @@
   /* ---------------- 联机组件：后台顺序加载 ----------------
      顺序加载最稳：protocol.js → socket.io → net.js，后者依赖前者的 CS/SC/io。
      全程后台、失败可重试，不再阻塞登录框，也不再弹「加载超时」alert。 */
-  const SCRIPTS = ['/protocol.js?v=20261109b', '/socket.io/socket.io.js', 'js/net.js?v=20261109b'];
+  const SCRIPTS = ['/protocol.js?v=20261109c', '/socket.io/socket.io.js', 'js/net.js?v=20261109c'];
   let scriptsPromise = null;
   function loadScripts() {
     if (scriptsPromise) return scriptsPromise;
@@ -419,16 +419,8 @@
     }
 
     el('lobby-close').onclick = () => {
-      hideLobbyBox();
-      if (window.NET) NET.disconnect();
-      netPromise = null;
-      enteredGame = false;
-      netToast('');
-      // 回到单机：清掉联机 handler、恢复玩家自己的单机档位
-      if (window.SpeedUI) {
-        SpeedUI.restoreLocal();
-        SpeedUI.disable(['lobby-speed', 'game-speed'], false);
-      }
+      if (inOnlineGame()) { askGiveUp(() => doGiveUp()); return; }
+      leaveToLocal();
     };
     const retry = el('lobby-retry');
     if (retry) retry.onclick = () => {
@@ -468,6 +460,82 @@
         lobbyMsg('⚠️ 网络错误，请稍后重试');
       }
     };
+  }
+
+  /* ---------------- 确认式主动放弃：掉线 ≠ 主动退出 ----------------
+     · 掉线：服务端只在 disconnect 里 leaveRoom（座位托管 AI、不打标记），
+       重连发 CS.RESUME 就能回到真人座位，绝不弹这里的对话框。
+     · 只有用户主动点「离开 / 退出」并在确认框点「确定放弃」，才发 CS.GIVE_UP。
+     · 用 DOM 对话框而不是 window.confirm：confirm 会冻结主线程，联机对局中
+       会让 socket 收包与引擎定时器一起停摆，看起来就是画面卡住。
+     · 放弃只标记座位并交给 AI 跑到终局，不改人数 / 资产 / 胜负规则。 */
+  function inOnlineGame() {
+    return !!(window.NET && NET.on && NET.room && NET.room.started);
+  }
+  let giveupAction = null;
+  function closeGiveUp() {
+    const b = el('giveup-overlay');
+    if (b) b.classList.add('hidden');
+    giveupAction = null;
+  }
+  function askGiveUp(fn) {
+    const b = el('giveup-overlay');
+    if (!b || !inOnlineGame()) { if (fn) fn(); return; }
+    giveupAction = fn;
+    b.classList.remove('hidden');
+  }
+  function leaveToLocal() {
+    hideLobbyBox();
+    if (window.NET) NET.disconnect();
+    netPromise = null;
+    enteredGame = false;
+    netToast('');
+    // 回到单机：清掉联机 handler、恢复玩家自己的单机档位
+    if (window.SpeedUI) {
+      SpeedUI.restoreLocal();
+      SpeedUI.disable(['lobby-speed', 'game-speed'], false);
+    }
+  }
+  function doGiveUp(after) {
+    const net = window.NET;
+    const type = (window.CS && CS.GIVE_UP) || 'cs:giveUp';
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      leaveToLocal();
+      if (after) after();
+    };
+    if (!net || !net.on || !net.socket) {
+      netToast('网络已断开，放弃状态可能未同步；重连后仍可回到座位', false, 4000);
+      finish();
+      return;
+    }
+    /* ack 等服务端确认「放弃已登记」再断开，避免 disconnect 丢掉未送达的包 */
+    net.socket.emit(type, {}, res => {
+      if (res && res.ok === false) netToast('⚠️ ' + (res.msg || '放弃未生效'), false, 4000);
+      finish();
+    });
+    setTimeout(finish, 1800);   // ack 丢失兜底，不把用户困在对话框里
+  }
+  function bindGiveUpDialog() {
+    const c = el('giveup-cancel'), f = el('giveup-confirm');
+    if (c) c.onclick = () => closeGiveUp();
+    if (f) f.onclick = () => { const fn = giveupAction; closeGiveUp(); if (fn) fn(); };
+  }
+  function interceptExitButtons() {
+    ['btn-quit', 'btn-exit'].forEach(id => {
+      const b = el(id);
+      if (!b) return;
+      /* 捕获阶段拦截：挡住 render.js 里「直接 reload / window.confirm」的冒泡 handler，
+         完全不用改单机共用的 render.js */
+      b.addEventListener('click', e => {
+        if (!inOnlineGame()) return;
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        askGiveUp(() => doGiveUp(() => location.reload()));
+      }, true);
+    });
   }
 
   /* socket 连上后：注册房间/错误/状态事件，并启用全部按钮 */
@@ -653,6 +721,8 @@
 
   /* ---------------- 入口 ---------------- */
   window.addEventListener('DOMContentLoaded', () => {
+    bindGiveUpDialog();
+    interceptExitButtons();
     const b = document.getElementById('btn-online');
     if (!b) return;
     if (location.protocol === 'file:') { b.style.display = 'none'; return; }

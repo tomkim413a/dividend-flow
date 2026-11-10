@@ -70,9 +70,10 @@ app.use(express.static(ROOT, {
 }));
 app.get('/protocol.js', (req, res) => res.sendFile(path.join(__dirname, 'protocol.js')));
 
-/* 公开房列表开关：默认 false —— 不开时线上行为与旧版完全一致。
-   出问题只需改环境变量重启即可回退，不用 revert、不用重新推送、不用挂代理。 */
-const MATCH_ENABLED = String(process.env.MATCH_ENABLED || '').toLowerCase() === 'true';
+/* 公开房列表开关（第二部分：公开房列表 + 一键加入）：默认开启。
+   一键回退：在 Render 环境变量设 MATCH_ENABLED=false 即恢复旧版行为，
+   不用 revert、不用重新推送、不用挂代理。 */
+const MATCH_ENABLED = String(process.env.MATCH_ENABLED || 'true').toLowerCase() !== 'false';
 
 /* ---------------- 健康检查（Render 探活 / 保活 ping 用） ---------------- */
 app.get('/api/health', (req, res) => {
@@ -266,7 +267,8 @@ function roomInfo(room) {
     aiCount: room.aiCount == null ? -1 : room.aiCount,
     humanCap: roomMgr.humanCapOf(room),
     visibility: room.visibility === 'public' ? 'public' : 'private',
-    seats: room.seats.map(s => ({ userId: s.userId, name: s.name, ai: !!s.ai, prof: s.prof || '' }))
+    seats: room.seats.map(s => ({ userId: s.userId, name: s.name, ai: !!s.ai,
+      gaveUp: !!s.gaveUp, prof: s.prof || '' }))
   };
 }
 
@@ -316,6 +318,22 @@ io.on('connection', socket => {
     const room = roomMgr.leaveRoom(roomId, socket.user.id);
     if (room) io.to(roomId).emit(SC.ROOM, roomInfo(room));
     broadcastRoomList();
+  });
+
+  /* 主动放弃：只有客户端点了「确定放弃」对话框才会发。
+     掉线走 disconnect → leaveRoom（托管 AI、不打放弃标记），重连 RESUME 可回到座位。
+     这里不碰引擎的胜负与资产规则，只标记座位并交给 AI，其他玩家照常把这局玩完。 */
+  socket.on(CS.GIVE_UP, (d = {}, ack) => {
+    /* ack 让客户端确认「放弃已登记」后再断开，避免 disconnect 丢掉未送达的包 */
+    const done = payload => { if (typeof ack === 'function') ack(payload); };
+    const roomId = currentRoomId(socket);
+    if (!roomId) return done({ ok: false, msg: '不在房间内' });
+    const r = roomMgr.giveUp(roomId, socket.user.id);
+    if (r.err) return done({ ok: false, msg: r.err });
+    socket.leave(roomId);
+    io.to(roomId).emit(SC.ROOM, roomInfo(r.room));
+    broadcastRoomList();
+    done({ ok: true, msg: '你已放弃本局，座位由电脑接管' });
   });
 
   /* 开局前修改职业 */

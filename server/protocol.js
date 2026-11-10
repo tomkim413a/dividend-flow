@@ -13,6 +13,7 @@ const CS = {
   SET_SPEED:   'cs:setSpeed',        // 调 AI / 动画速度 { speed }（房间级，开局后也生效）
   SET_ROOM_CFG:'cs:setRoomCfg',      // 房主设房间 { seatCap, aiCount, visibility }
   LIST_ROOMS:  'cs:listRooms',       // 拉取公开房列表
+  GIVE_UP:     'cs:giveUp',          // 主动放弃本局（只在用户点了确认式退出对话框后发）
   RESUME:      'cs:resume',          // 断线重连回对局 { roomId }
   TOGGLE_AI:   'cs:toggleAi',        // 座位设为 AI / 真人
   ROLL:        'cs:roll',            // 掷骰
