@@ -301,5 +301,18 @@ ck('★ 房主确认框会额外说明转让 / 终止规则',
   html.includes('id="giveup-host-hint"') && onSrc.includes('你是房主：房内还有其他真人时'));
 ck('★ 新 SC 常量与旧值共存', SC.ROOM_ENDED === 'sc:roomEnded' && SC.GAME_OVER === 'sc:gameOver');
 
+console.log('\n===== H 房间归属：一个 socket 只能属于一个房 =====');
+ck('★ currentRoomId 只认仍存活的房间（终止后残留房号不串房）',
+  /roomMgr\.rooms\.has\(r\)/.test(idxSrc));
+ck('★ 建房前先退旧房（连续建两房不再把调速打到旧房）',
+  /socket\.on\(CS\.CREATE_ROOM[\s\S]{0,180}leaveCurrentRoom\(socket\)/.test(idxSrc));
+ck('★ 加房成功后才退旧房（输错房号不会把人踢出原房）',
+  /if \(r\.err\) return socket\.emit\(SC\.ERROR, \{ msg: r\.err \}\);[\s\S]{0,220}leaveCurrentRoom\(socket, r\.room\.id\)/.test(idxSrc));
+ck('★ 终止后清掉残留房间频道', idxSrc.includes('socketsLeave(roomId)'));
+ck('★ 对局中禁止直接换房（避免绕过确认框把座位托给 AI）',
+  /function inStartedRoom/.test(idxSrc) &&
+  /CS\.CREATE_ROOM[\s\S]{0,220}inStartedRoom\(socket\)/.test(idxSrc) &&
+  /CS\.JOIN_ROOM[\s\S]{0,300}inStartedRoom\(socket, target\)/.test(idxSrc));
+
 console.log(`\n========================================\n  房间匹配回归：${pass} 通过 / ${fail} 失败\n========================================`);
 process.exit(fail ? 1 : 0);

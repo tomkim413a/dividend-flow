@@ -272,10 +272,36 @@ function roomInfo(room) {
   };
 }
 
-/** 取该 socket 当前所在的房间号（socket.io 自身 id 要排除） */
+/** 取该 socket 当前所在的房间号（socket.io 自身 id 要排除）。
+ *  ★ 只认 rooms Map 里还活着的房：整局终止会删房，socket.rooms 里可能残留旧房号，
+ *    不过滤的话后续动作会全部打到已删除的房上。 */
 function currentRoomId(socket) {
-  for (const r of socket.rooms) if (r !== socket.id) return r;
+  for (const r of socket.rooms) {
+    if (r !== socket.id && roomMgr.rooms.has(r)) return r;
+  }
   return null;
+}
+
+/** 一个 socket 只能属于一个房间频道。
+ *  建房 / 加房前先退掉旧房，否则 socket.rooms 里同时挂着 X、Y，
+ *  currentRoomId() 会取到先加入的 X，导致调速 / 开局 / 掷骰全打到旧房（已实测复现）。
+ *  exceptRoomId：目标就是当前房（重复加入）时不退。 */
+function leaveCurrentRoom(socket, exceptRoomId) {
+  const old = currentRoomId(socket);
+  if (!old || old === exceptRoomId) return false;
+  socket.leave(old);
+  const room = roomMgr.leaveRoom(old, socket.user.id);
+  if (room) io.to(old).emit(SC.ROOM, roomInfo(room));
+  return true;
+}
+
+/** 对局进行中不允许直接换房：leaveCurrentRoom 会把原座位托管给 AI，
+ *  必须先走确认式退出（CS.GIVE_UP），否则等于绕过对话框破坏了整局。 */
+function inStartedRoom(socket, targetRoomId) {
+  const cur = currentRoomId(socket);
+  if (!cur || cur === targetRoomId) return false;
+  const r = roomMgr.rooms.get(cur);
+  return !!(r && r.started);
 }
 
 /* ★ 用 io.emit 全量广播，绝不用 socket.join('大厅')：
@@ -293,6 +319,9 @@ function broadcastRoomList() {
 io.on('connection', socket => {
   /* 建房 */
   socket.on(CS.CREATE_ROOM, (data = {}) => {
+    if (inStartedRoom(socket))
+      return socket.emit(SC.ERROR, { msg: '对局进行中，请先退出本局再建房' });
+    leaveCurrentRoom(socket);                   // 先退旧房，避免一个 socket 挂两个房号
     const cfg = Object.assign({}, data);
     if (!MATCH_ENABLED) delete cfg.visibility;   // 开关关闭时强制私密房
     const room = roomMgr.createRoom(socket.user, data.prof, data.speed, cfg);
@@ -303,8 +332,12 @@ io.on('connection', socket => {
 
   /* 加房 */
   socket.on(CS.JOIN_ROOM, (data = {}) => {
+    const target = String((data && data.roomId) || '').toUpperCase();
+    if (inStartedRoom(socket, target))
+      return socket.emit(SC.ERROR, { msg: '对局进行中，请先退出本局再加入其他房间' });
     const r = roomMgr.joinRoom(data.roomId, socket.user, data.prof);
-    if (r.err) return socket.emit(SC.ERROR, { msg: r.err });
+    if (r.err) return socket.emit(SC.ERROR, { msg: r.err });   // 输错房号不能把人踢出原房
+    leaveCurrentRoom(socket, r.room.id);       // 加入成功后才退旧房
     socket.join(r.room.id);
     io.to(r.room.id).emit(SC.ROOM, roomInfo(r.room));
     broadcastRoomList();
@@ -334,6 +367,8 @@ io.on('connection', socket => {
     if (r.terminated) {
       /* 房内已无真人：只发终止事件，不走 GAME_OVER / onOver，终止局不记战绩 */
       io.to(roomId).emit(SC.ROOM_ENDED, { msg: r.msg || '房内已无真人玩家' });
+      /* 清掉残留房间频道（不断开玩家连接），socket.rooms 不再挂着已删房号 */
+      try { io.in(roomId).socketsLeave(roomId); } catch (e) {}
     } else {
       io.to(roomId).emit(SC.ROOM, roomInfo(r.room));   // 含转让后的新 hostId
     }
