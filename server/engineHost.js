@@ -66,8 +66,11 @@ function createEngineContext(opts) {
   return { CF, Engine, takeSfx };
 }
 
-/** 生成一局的配置（cfg）：[{ name, prof, shape, ai }]
- *  职业优先用座位上玩家选的（p.prof），缺失或非法时才按序号兜底 */
+/** 生成一局的配置（cfg）：[{ name, prof, shape, ai, humanSeat }]
+ *  职业优先用座位上玩家选的（p.prof），缺失或非法时才按序号兜底。
+ *  humanSeat = 开局时的座位身份，写入后永不随「断线托管」改变：
+ *  p.ai 会在 leaveRoom / resume 时被反复改写，不能拿它判断「这位子原本是不是真人」，
+ *  否则玩家一断线，引擎就会把他的资产当成 AI 资产自动变卖。 */
 function buildCfg(CF, players) {
   const profIds = CF.PROFESSIONS.map(p => p.id);
   const valid = new Set(profIds);
@@ -75,7 +78,8 @@ function buildCfg(CF, players) {
     name: p.name,
     prof: valid.has(p.prof) ? p.prof : profIds[i % profIds.length],
     shape: p.shape || '',
-    ai: !!p.ai
+    ai: !!p.ai,
+    humanSeat: !p.ai
   }));
 }
 

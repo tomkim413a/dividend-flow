@@ -117,12 +117,19 @@
   }
 
   /* ---------- 玩家 ---------- */
+  /* 座位身份在开局时固定，不随断线托管变化。
+     单机 cfg 不带 humanSeat → 退回按 ai 判断，行为与旧版逐字段一致；
+     联机由 server/engineHost.buildCfg 显式写入。 */
+  function isHumanSeat(p) {
+    return !!p && (p.humanSeat !== undefined ? !!p.humanSeat : !p.ai);
+  }
   function buildPlayer(cfg, i) {
     const prof = CF.PROFESSIONS.find(x => x.id === cfg.prof) || CF.PROFESSIONS[0];
     // 棋子形状：玩家自选；未指定（如 AI）则随机一个，盘面更好认人
     const shape = CF.PIECE_SHAPES.some(s => s.k === cfg.shape) ? cfg.shape : CF.pick(CF.PIECE_SHAPES).k;
     return {
       name: cfg.name || prof.name, ai: !!cfg.ai, color: CF.COLORS[i % CF.COLORS.length], prof, shape,
+      humanSeat: cfg.humanSeat !== undefined ? !!cfg.humanSeat : !cfg.ai,
       cash: prof.savings,
       expLines: prof.expenseLines.map(l => Object.assign({}, l, { paid: false })),
       stocks: [], hamsterPos: 0, skip: false, charityDice: false, dead: false, won: false
@@ -318,13 +325,16 @@
 
   /* ---------- 破产保护：现金不足以支出时变卖股票清偿；卖空仍资不抵债则淘汰 ---------- */
   // 规则分流：
-  //   · 真人玩家 → 弹窗（pending: 'liquidate'）让他自己决定卖哪只、卖多少股，引擎只兜底；
-  //   · AI / 无持仓 → 自动变卖，顺序先动“不产股息的成长股”，尽量保住吃股息的红利股。
+  //   · 真人座位 → 弹窗（pending: 'liquidate'）让他自己决定卖哪只、卖多少股，引擎只兜底；
+  //   · 真 AI / 无持仓 → 自动变卖，顺序先动“不产股息的成长股”，尽量保住吃股息的红利股。
   // 每一笔变卖都记入 S.liq，供 UI 逐笔回放（高亮行情条 / 棋盘棋子 / 玩家卡）。
+  // ★ 判据必须是「开局座位身份」而不是 p.ai：联机断线时 leaveRoom() 会把
+  //   p.ai 临时改成 true 让电脑代打回合，那不是「授权替玩家卖资产」。
+  //   旧版用 !p.ai 判断，玩家一断线就走 autoLiquidate，表现为「没弹窗直接卖掉」。
   function bailout(p) {
     if (!S || S.over || p.dead || p.won || p.cash >= 0) return;
-    if (!p.ai && (p.stocks || []).length) {
-      // 真人：不替他做主，交给他自己挑（弹窗要求至少卖到现金不为负）
+    if (isHumanSeat(p) && (p.stocks || []).length) {
+      // 真人（含断线托管中）：不替他做主，挂起等他重连自己挑
       setPending('liquidate', { deficit: Math.ceil(-p.cash) });
       return;
     }
@@ -711,11 +721,19 @@
         // gate 期间（教学演示的开场导览）放弃这次掷骰，但必须把状态还回 'roll'，
         // 否则 Engine.resume() 里的 drive() 会认为“不在等待掷骰”而不再驱动 AI。
         if (S.gate) { S.await = 'roll'; return; }
+        // ★ 这个定时器是断线托管时排下的，玩家可能已经重连（p.ai 被改回 false）。
+        //   旧版不看这一点，仍会 aiSellWinners() 替真人卖股并自动掷骰。
+        //   真正 AI 座位的 p.ai 恒为 true，不受影响。
+        if (cur() !== p) return;
+        if (!p.ai) { S.await = 'roll'; return; }
         aiSellWinners(p);
         S.await = 'roll';
         doRoll();
       }, TM.aiRollMs);
     } else if (S.await === 'pending' && p.ai) {
+      // ★ 真人座位的破产变卖只能本人确认：托管 AI 不代做，保持 pending 挂起等重连。
+      //   其余决策（买股 / 买房 / 慈善）仍由 AI 代打，整局不会因此停摆。
+      if (isHumanSeat(p) && S.pending && S.pending.type === 'liquidate') return;
       S.await = 'busy';
       later(autoChoose, TM.aiChooseMs);
     }
@@ -732,6 +750,12 @@
   function autoChoose() {
     if (!S.pending) return;
     const p = cur(), pd = S.pending;
+    /* ★ 双保险：断线时排下的 AI 决策定时器，若玩家已重连（p.ai 改回 false）
+       就把决定权原样交还本人；真人座位的破产变卖则任何时候都不许 AI 代做。
+       drive() 挡住新调度，这里挡住「已在飞行中」的那一个，并把状态还原成
+       等待玩家决策，否则 S.await 会卡在 'busy' 让弹窗永远出不来。
+       真正 AI 座位 p.ai 恒 true、humanSeat 恒 false，完全不受影响。 */
+    if (isHumanSeat(p) && (!p.ai || pd.type === 'liquidate')) { S.await = 'pending'; return; }
     let id = 'pass', payload = {};
     switch (pd.type) {
       case 'stock': {

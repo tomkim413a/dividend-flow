@@ -1984,6 +1984,11 @@
   /* 注意不能用 left > 0：引擎 tick() 是「w.left-- 之后才 emit」，
      最后一格（落格帧）的 walk.left 恰好是 0，把它判成可合并帧会丢掉终点位置。 */
   const isWalkFrame = st => !!(st && st.walk && typeof st.walk.left === 'number');
+  /* ★ 破产变卖等「必须由玩家本人确认」的决策帧同样不可合并：
+     重连补包 / 后台积压时若被 splice 掉，玩家一帧都看不到弹窗，
+     回头只看到资产少了（配合服务端托管 AI 代做时就是「没选就被卖」）。 */
+  const isDecisionFrame = st => !!(st && st.pending && st.pending.type === 'liquidate');
+  const isProtectedFrame = st => isWalkFrame(st) || isDecisionFrame(st);
   /* ★ 只靠 rAF 有致命缺陷：切到别的标签页 / 窗口失焦时浏览器会暂停 rAF，
      队列不再消费；网络包却仍在到达，积压后要么被上限丢掉中间格，要么回到前台
      一次性连播 —— 这正是「慢速也偶发快速跳棋子 + 卡顿」的来源。
@@ -2008,9 +2013,9 @@
   function enqueueState(st) {
     stateQueue.push(st);
     if (stateQueue.length > MAX_STATE_QUEUE) {
-      // 先合并重复的非走格帧，尽量把每一格都留下来
+      // 先合并可合并的普通帧（行情 / 日志 / 掷骰），走格帧与决策帧一律保留
       for (let i = 0; i < stateQueue.length - 1 && stateQueue.length > MAX_STATE_QUEUE;) {
-        if (isWalkFrame(stateQueue[i])) i++;
+        if (isProtectedFrame(stateQueue[i])) i++;
         else stateQueue.splice(i, 1);
       }
       // 极端情况全是走格帧：才退而丢最老的几个，绝不一次性只留最后一个

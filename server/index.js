@@ -354,7 +354,7 @@ io.on('connection', socket => {
   });
 
   /* 主动放弃：只有客户端点了「确定放弃」对话框才会发。
-     掉线走 disconnect → leaveRoom（托管 AI、不打放弃标记），重连 RESUME 可回到座位。
+     掉线走 disconnecting → leaveRoom（托管 AI、不打放弃标记），重连 RESUME 可回到座位。
      这里不碰引擎的胜负与资产规则，只标记座位并交给 AI，其他玩家照常把这局玩完。 */
   socket.on(CS.GIVE_UP, (d = {}, ack) => {
     /* ack 让客户端确认「放弃已登记」后再断开，避免 disconnect 丢掉未送达的包 */
@@ -472,8 +472,13 @@ io.on('connection', socket => {
   socket.on(CS.SELL, (d = {}) => withGame(room => room.game.Engine.act.sellStock(d.sym, d.shares)));
   socket.on(CS.PAY_DEBT, (d = {}) => withGame(room => room.game.Engine.act.payDebt(d.amount)));
 
-  /* 断线：对局中自动托管给 AI */
-  socket.on('disconnect', () => {
+  /* 断线：对局中自动托管给 AI。
+     ★ 必须绑 disconnecting，不能绑 disconnect：Socket.IO 4 的 _onclose() 顺序是
+       emit('disconnecting') → _cleanup()（leaveAll 清空 socket.rooms）→ emit('disconnect')。
+       旧版绑在 disconnect 上，此时 currentRoomId() 恒为 null，整个托管分支从未执行，
+       玩家一掉线整局就没人推进；也正因为如此，资产自动变卖漏洞只能从
+       LEAVE_ROOM / GIVE_UP 等低频路径偶尔触发。 */
+  socket.on('disconnecting', () => {
     const roomId = currentRoomId(socket);
     if (!roomId) return;
     const room = roomMgr.leaveRoom(roomId, socket.user.id);
