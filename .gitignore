@@ -26,5 +26,6 @@ Thumbs.db
 !.uitest/regression-stable.js
 !.uitest/e2e-local.js
 !.uitest/match-protocol.js
+!.uitest/flow-regression.js
 !.uitest/package.json
 !.uitest/package-lock.json

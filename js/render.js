@@ -200,15 +200,28 @@
     if (UI.hoIdx === S.cur) return;      // 本回合已提示过，不再重复
     UI.hoIdx = S.cur;
     const online = isOnlineGame();
-    UI.handoff = { idx: S.cur, passive: online };
+    /* ★ AI 座位绝不 gate：旧版「轮到电脑」也要人工点「知道了」才放行，
+       而「再来一局」时 beginTurn() 是 emit() 在前、drive() 在后 ——
+       emit 触发的 render 先把 gate 打开，随后的 drive() 直接 return，
+       AI 的掷骰定时器根本没被安排。若交接框被演示盖住或没渲染出来，
+       就是「玩家排在 AI 之后不能掷骰、AI 也不掷骰」的永久卡死。
+       现在 AI 交接框纯展示并自动收起，引擎照常自动推进。 */
+    const showOnly = online || !!p.ai || UI.guide != null;
+    UI.handoff = { idx: S.cur, passive: showOnly, autoClose: !!p.ai };
     /* ★ 联机时绝不 gate/resume 本地引擎：旧版点「确定」会 Engine.resume()，
        在浏览器里另跑一套规则与走格定时器，与服务端权威状态分叉，
        表现为「切换玩家后按钮时有时无、画面卡住」。联机版只做纯展示提示。 */
-    if (!online) Engine.gate(true);
+    if (!showOnly) Engine.gate(true);
   }
   function handoffModal(S) {
     const i = UI.handoff.idx, p = S.players[i];
     if (!p) { UI.handoff = null; Engine.gate(false); return; }
+    /* 同一次交接不重建 DOM：走格时每格都会 render，旧版每次都 innerHTML 重建
+       整个弹窗并重新 focus，造成短暂卡顿与「点了没反应」。 */
+    const key = 'handoff:' + S.turn + ':' + i;
+    const box0 = $('#mbody');
+    if ($('#modal') && !$('#modal').classList.contains('hidden')
+        && box0.getAttribute('data-modal-key') === key) return;
     const exp = Engine.h.expTotal(p), pas = Engine.h.passive(p);
     const cell = CF.HAMSTER_BOARD[p.hamsterPos];
     const ai = !!p.ai;
@@ -230,16 +243,27 @@
         </div>
         <div class="sub">${ai ? '确认后电脑才开始掷骰与交易' : '其他人请暂时回避 👀 · 确认后即可掷骰'}</div>
       </div>`);
+    box0.setAttribute('data-modal-key', key);
+    /* AI 交接框是纯展示：不闸引擎，短暂露出后自动收起，
+       既不挡住棋盘，也不会因为没人点按钮而把整局停在这里。 */
+    if (UI.handoff && UI.handoff.autoClose) {
+      window.setTimeout(() => {
+        if (UI.handoff && UI.handoff.idx === i && UI.handoff.autoClose) {
+          UI.handoff = null;
+          render();
+        }
+      }, 1100);
+    }
     const ok = $('#btn-ho-ok');
     if (ok) {
-      ok.focus();                        // 聚焦后可直接敲回车 / 空格确认
+      if (!(UI.handoff && UI.handoff.autoClose)) ok.focus();   // 只有真人交接才抢焦点
       ok.onclick = () => {
-        const passive = !!(UI.handoff && UI.handoff.passive);   // 联机：纯展示
+        const passive = !!(UI.handoff && UI.handoff.passive);   // 联机 / AI：纯展示
         UI.handoff = null;
         if (passive) { render(); return; }                      // 不碰本地引擎
-        Engine.gate(false);              // 单机：放行
+        Engine.gate(false);              // 单机真人：放行
         render();
-        Engine.resume();                 // 重新驱动：AI 这时才真正开始掷骰
+        Engine.resume();                 // 重新驱动
       };
     }
   }
@@ -915,9 +939,24 @@
 
   function winModal(S) {
     const w = S.winner;
+    const online = isOnlineGame();
+    /* 联机时服务端是唯一权威：一局结束房间仍是 started，本地重开一份假局
+       只会让「掷骰」发出的 CS.ROLL 被服务端 S.over 挡掉，玩家看到的就是卡死。
+       因此联机结算不提供「再来一局」，改为回到设置重新联机（token 会保留）。 */
+    const againLabel = online ? '🏠 返回设置 · 重新联机' : '🔄 再来一局';
+    const winKey = 'win:' + (w ? w.name : 'none') + ':' + S.turn;
+    const box0 = $('#mbody');
+    if ($('#modal') && !$('#modal').classList.contains('hidden')
+        && box0.getAttribute('data-modal-key') === winKey) return;
     const bindEnd = () => {
+      box0.setAttribute('data-modal-key', winKey);
       $('#btn-again').onclick = () => {
         hideModal(); resetHandoff();
+        if (online) {
+          try { if (window.NET && NET.disconnect) NET.disconnect(); } catch (e) {}
+          location.reload();
+          return;
+        }
         if (window.BGM) window.BGM.play('game');   // 再来一局 → 切回对局 BGM（否则会停在结算曲）
         Engine.start(S.cfg);
       };
@@ -932,7 +971,7 @@
         ${standingsHTML(S)}
         ${statsNoteHTML()}
         <div class="mbtns" style="justify-content:center">
-          <button class="btn gold big" id="btn-again">🔄 再来一局</button>
+          <button class="btn gold big" id="btn-again">${againLabel}</button>
           <button class="btn" id="btn-setup">返回设置</button>
         </div>
       </div>`);
@@ -951,7 +990,7 @@
         ${standingsHTML(S)}
         ${statsNoteHTML()}
         <div class="mbtns" style="justify-content:center">
-          <button class="btn gold big" id="btn-again">🔄 再来一局</button>
+          <button class="btn gold big" id="btn-again">${againLabel}</button>
           <button class="btn" id="btn-setup">返回设置</button>
         </div>
       </div>`);
@@ -1939,10 +1978,24 @@
      队列上限防止重连补包时十几个状态长时间占住主线程。 */
   const stateQueue = [];
   let queuePlaying = false;
-  const MAX_STATE_QUEUE = 16;
+  const MAX_STATE_QUEUE = 48;
+  /* 走格帧（S.walk.left > 0）必须每格画一帧；非走格帧（掷骰、行情、日志更新）
+     积压时可以合并，不会让人看到「棋子突然跳到终点」。 */
+  const isWalkFrame = st => !!(st && st.walk && st.walk.left > 0);
+  /* ★ 只靠 rAF 有致命缺陷：切到别的标签页 / 窗口失焦时浏览器会暂停 rAF，
+     队列不再消费；网络包却仍在到达，积压后要么被上限丢掉中间格，要么回到前台
+     一次性连播 —— 这正是「慢速也偶发快速跳棋子 + 卡顿」的来源。
+     加 setTimeout 兜底，两者用 once 保证一帧只消费一个状态。 */
   const nextFrame = fn => {
-    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(fn);
-    else setTimeout(fn, 16);
+    let done = false, guard = null;
+    const go = () => {
+      if (done) return;
+      done = true;
+      if (guard) { clearTimeout(guard); guard = null; }
+      fn();
+    };
+    if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(go);
+    guard = window.setTimeout(go, 40);
   };
   function drainStateQueue() {
     const st = stateQueue.shift();
@@ -1952,10 +2005,26 @@
   }
   function enqueueState(st) {
     stateQueue.push(st);
-    // 极端积压（重连一次性补十几个包）：只保留最新的，避免画面长时间滞后
-    if (stateQueue.length > MAX_STATE_QUEUE) stateQueue.splice(0, stateQueue.length - 1);
+    if (stateQueue.length > MAX_STATE_QUEUE) {
+      // 先合并重复的非走格帧，尽量把每一格都留下来
+      for (let i = 0; i < stateQueue.length - 1 && stateQueue.length > MAX_STATE_QUEUE;) {
+        if (isWalkFrame(stateQueue[i])) i++;
+        else stateQueue.splice(i, 1);
+      }
+      // 极端情况全是走格帧：才退而丢最老的几个，绝不一次性只留最后一个
+      while (stateQueue.length > MAX_STATE_QUEUE) stateQueue.shift();
+    }
     if (!queuePlaying) { queuePlaying = true; nextFrame(drainStateQueue); }
   }
+  /* 回到前台时若积压过多，直接同步到最新状态。后台发生的事本来就该一次同步，
+     而不是把几十个旧格在人眼前连播一遍（那看起来就像瞬移）。 */
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || stateQueue.length <= 6) return;
+    const latest = stateQueue[stateQueue.length - 1];
+    stateQueue.length = 0;
+    queuePlaying = false;
+    if (latest) { Engine.hydrate(latest); render(); }
+  });
   window.ONLINE_HOOKS = {
     // 进入对局画面（隐藏开始界面 / 显示游戏界面 / 切对局 BGM）
     enter: function () {
@@ -1986,10 +2055,11 @@
       enqueueState(st);
     },
     // 对局结束
-    over: function (info) {
+    over: function () {
       if (window.BGM) window.BGM.play('end');
-      const w = info && info.winner;
-      try { window.alert(w ? ('对局结束，胜者：' + w) : '对局结束，无人胜出'); } catch (e) {}
+      /* ★ 绝不用 window.alert：它会冻结主线程，rAF 与状态队列一起停摆，
+         松手后积压的状态被集中消费 / 丢弃，表现就是「跳格 + 短暂卡顿」。
+         结算画面已由 S.over 快照触发 winModal，这里只负责切 BGM。 */
     }
   };
 })();

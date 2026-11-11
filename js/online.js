@@ -125,7 +125,7 @@
   /* ---------------- 联机组件：后台顺序加载 ----------------
      顺序加载最稳：protocol.js → socket.io → net.js，后者依赖前者的 CS/SC/io。
      全程后台、失败可重试，不再阻塞登录框，也不再弹「加载超时」alert。 */
-  const SCRIPTS = ['/protocol.js?v=20261109c', '/socket.io/socket.io.js', 'js/net.js?v=20261109c'];
+  const SCRIPTS = ['/protocol.js?v=20261111a', '/socket.io/socket.io.js', 'js/net.js?v=20261111a'];
   let scriptsPromise = null;
   function loadScripts() {
     if (scriptsPromise) return scriptsPromise;
@@ -643,7 +643,10 @@
     });
 
     NET.onEvent('over', info => {
-      netToast('');
+      /* 不用 window.alert：会冻结主线程，让走格状态队列积压后出现跳格 / 卡顿。
+         结算卡片由 S.over 快照的 winModal 呈现，这里只补一条不阻塞的横幅提示。 */
+      const w = info && info.winner;
+      netToast(w ? ('🏁 对局结束，胜者：' + w) : '🏁 对局结束，无人胜出', false, 8000);
       if (window.ONLINE_HOOKS) window.ONLINE_HOOKS.over(info);
     });
 
