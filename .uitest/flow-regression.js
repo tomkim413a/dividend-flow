@@ -56,7 +56,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   console.log('\n=== C. 状态队列：每格至少一帧，后台不积压 ===');
   ck('队列上限放宽到 48', /const MAX_STATE_QUEUE = 48;/.test(render));
   ck('不再用 splice 一次性丢掉所有中间格', !/stateQueue\.splice\(0, stateQueue\.length - 1\)/.test(render));
-  ck('走格帧特殊保护（S.walk.left）', /const isWalkFrame = st => !!\(st && st\.walk && st\.walk\.left > 0\)/.test(render));
+  ck('走格帧特殊保护（含 walk.left=0 的落格帧）',
+    /const isWalkFrame = st => !!\(st && st\.walk && typeof st\.walk\.left === 'number'\)/.test(render));
   ck('积压时优先合并非走格帧', /if \(isWalkFrame\(stateQueue\[i\]\)\) i\+\+;\s*else stateQueue\.splice\(i, 1\);/.test(render));
   ck('rAF 之外有 setTimeout 兜底（后台标签页 rAF 会被暂停）',
     /guard = window\.setTimeout\(go, 40\);/.test(render) && /requestAnimationFrame\(go\)/.test(render));
@@ -131,6 +132,48 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const hyd = await page.evaluate(() => window.__hydrated);
   ck('★ 后台节流下 12 个走格帧全部渲染（零丢格）',
     hyd.length === 12 && hyd.every((v, i) => v === i), JSON.stringify(hyd));
+
+  /* E2b 极端积压：60 个状态里 13 个走格帧（含 walk.left=0 的落格帧）必须一个不丢 */
+  await page.evaluate(() => {
+    const S = Engine.state();
+    window.__hydrated = [];
+    window.requestAnimationFrame = fn => window.setTimeout(fn, 250);
+    for (let i = 0; i < 60; i++) {
+      const c = JSON.parse(JSON.stringify(S));
+      c.__probe = i;
+      if (i < 12) c.walk = { idx: 0, left: 12 - i, steps: 12, stepMs: 270 };
+      else if (i === 12) c.walk = { idx: 0, left: 0, steps: 12, stepMs: 270 };
+      else delete c.walk;
+      window.ONLINE_HOOKS.applyState(c);
+    }
+  });
+  await wait(3000);
+  const hy2 = await page.evaluate(() => window.__hydrated);
+  const walkFrames = hy2.filter(v => typeof v === 'number' && v <= 12);
+  ck('★ 60 个状态积压时 13 个走格帧（含落格帧）全部保留',
+    walkFrames.length === 13 && walkFrames.every((v, i) => v === i), JSON.stringify(hy2));
+  ck('★ 积压时优先合并非走格帧（收敛到上限 48）',
+    hy2.length === 48, '实际渲染 ' + hy2.length + ' 帧');
+
+  /* E2c 回到前台：积压直接同步最新，不能连播旧格或回退 */
+  const vis = await page.evaluate(() => {
+    const S = Engine.state();
+    window.__hydrated = [];
+    window.requestAnimationFrame = fn => window.setTimeout(fn, 1000);
+    for (let i = 0; i < 10; i++) {
+      const c = JSON.parse(JSON.stringify(S));
+      c.__probe = i; c.walk = { idx: 0, left: 10 - i, steps: 10, stepMs: 270 };
+      window.ONLINE_HOOKS.applyState(c);
+    }
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+    window.dispatchEvent(new Event('visibilitychange'));   // 监听器挂在 window 上
+    return { rendered: window.__hydrated.slice(), current: (Engine.state() || {}).__probe };
+  });
+  await wait(1200);
+  const visAfter = await page.evaluate(() => window.__hydrated.slice());
+  ck('★ 回前台一次性同步到最新状态，不连播旧格、不回退',
+    vis.rendered.length === 1 && vis.rendered[0] === 9 && vis.current === 9
+    && visAfter.length === 1 && visAfter[0] === 9, JSON.stringify({ vis, visAfter }));
 
   /* E3 联机结算：按钮文案正确，点击不重启本地引擎（放最后，点击会 reload） */
   const clickInfo = await page.evaluate(() => {

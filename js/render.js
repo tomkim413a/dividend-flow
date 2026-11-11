@@ -1981,7 +1981,9 @@
   const MAX_STATE_QUEUE = 48;
   /* 走格帧（S.walk.left > 0）必须每格画一帧；非走格帧（掷骰、行情、日志更新）
      积压时可以合并，不会让人看到「棋子突然跳到终点」。 */
-  const isWalkFrame = st => !!(st && st.walk && st.walk.left > 0);
+  /* 注意不能用 left > 0：引擎 tick() 是「w.left-- 之后才 emit」，
+     最后一格（落格帧）的 walk.left 恰好是 0，把它判成可合并帧会丢掉终点位置。 */
+  const isWalkFrame = st => !!(st && st.walk && typeof st.walk.left === 'number');
   /* ★ 只靠 rAF 有致命缺陷：切到别的标签页 / 窗口失焦时浏览器会暂停 rAF，
      队列不再消费；网络包却仍在到达，积压后要么被上限丢掉中间格，要么回到前台
      一次性连播 —— 这正是「慢速也偶发快速跳棋子 + 卡顿」的来源。
