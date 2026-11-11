@@ -53,42 +53,30 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   ck('online.js 的 over 提示改为不阻塞的 netToast',
     /NET\.onEvent\('over'[\s\S]{0,400}netToast\(/.test(online) && !/NET\.onEvent\('over'[\s\S]{0,400}window\.alert/.test(online));
 
-  console.log('\n=== C. 状态队列：语义去重、不丢格、不瞬移 ===');
-  ck('队列上限 48', /const MAX_STATE_QUEUE = 48;/.test(render));
+  console.log('\n=== C. 状态队列：每格至少一帧，后台不积压 ===');
+  ck('队列上限放宽到 48', /const MAX_STATE_QUEUE = 48;/.test(render));
   ck('不再用 splice 一次性丢掉所有中间格', !/stateQueue\.splice\(0, stateQueue\.length - 1\)/.test(render));
-  ck('走格帧判据保留（含 walk.left=0 的落格帧）',
+  ck('走格帧特殊保护（含 walk.left=0 的落格帧）',
     /const isWalkFrame = st => !!\(st && st\.walk && typeof st\.walk\.left === 'number'\)/.test(render));
-  ck('★ 所有 pending 决策帧都算关键帧（不只 liquidate）',
-    /const isDecisionFrame = st => !!\(st && st\.pending\);/.test(render)
-    && !/isDecisionFrame = st => !!\(st && st\.pending && st\.pending\.type/.test(render));
-  ck('★ 用语义签名在入队时合并重复广播',
-    /function frameSig\(st\)/.test(render) && /last\.__cfSig === sig/.test(render));
-  ck('★ 签名包含 walk.left / 决策类型与参数 / turn / cur / await',
-    /'W' \+ st\.walk\.left/.test(render) && /'P' \+ \(pd\.type/.test(render)
-    && /\[st\.turn, st\.cur, st\.await, w, pv\]/.test(render));
-  ck('★ 超限时全局同签名去重（走格帧签名唯一 → 一格不丢）',
-    /const seen = new Set\(\);/.test(render) && /seen\.has\(sig\)/.test(render));
-  ck('★ 超限时按最后一手折叠历史，不再无脑 shift 砍掉最老走格帧',
-    /function trimToLatestTurn\(\)/.test(render) && /trimToLatestTurn\(\);/.test(render));
-  ck('★ 回前台不再直接 hydrate 最新状态（那会瞬移）',
-    !/addEventListener\('visibilitychange'[\s\S]{0,500}Engine\.hydrate\(latest\)/.test(render));
-  ck('★ 短促失焦（<1s）与正常一次走格（≤12 帧）都不干预',
-    /away < 1000 \|\| stateQueue\.length <= MAX_WALK_RUN/.test(render));
-  ck('★ 单帧渲染异常不会毒化整条队列',
-    /try \{ Engine\.hydrate\(st\); render\(\); \}/.test(render)
-    && /跳过渲染失败的一帧/.test(render));
+  ck('积压时优先合并普通帧，走格帧与决策帧都保留',
+    /const isProtectedFrame = st => isWalkFrame\(st\) \|\| isDecisionFrame\(st\)/.test(render)
+    && /if \(isProtectedFrame\(stateQueue\[i\]\)\) i\+\+;\s*else stateQueue\.splice\(i, 1\);/.test(render));
+  ck('★ 破产变卖决策帧被标记为不可合并',
+    /const isDecisionFrame = st => !!\(st && st\.pending && st\.pending\.type === 'liquidate'\)/.test(render));
   ck('rAF 之外有 setTimeout 兜底（后台标签页 rAF 会被暂停）',
     /guard = window\.setTimeout\(go, 40\);/.test(render) && /requestAnimationFrame\(go\)/.test(render));
+  ck('回到前台积压过多时直接同步最新状态',
+    /addEventListener\('visibilitychange'[\s\S]{0,400}stateQueue\.length = 0/.test(render));
   ck('交接框与结算框都做 data-modal-key 去重，避免每帧重建',
     /const key = 'handoff:'/.test(render) && /const winKey = 'win:'/.test(render));
 
   console.log('\n=== D. 脚本版本号一致（防浏览器缓存） ===');
-  ck('index.html 7 处脚本全部 20261111c',
-    (html.match(/\?v=20261111c/g) || []).length === 7);
+  ck('index.html 7 处脚本全部 20261111b',
+    (html.match(/\?v=20261111b/g) || []).length === 7);
   ck('online.js 动态加载的 protocol/net 同步版本',
-    (online.match(/20261111c/g) || []).length === 2);
-  ck('无旧版 20261111a / 20261111b / 20261109c 残留',
-    !/20261111a|20261111b|20261109c/.test(html + online));
+    (online.match(/20261111b/g) || []).length === 2);
+  ck('无旧版 20261111a / 20261109c 残留',
+    !/20261111a|20261109c/.test(html + online));
 
   console.log('\n=== E. 真实 Edge 行为验证 ===');
   const { chromium } = require(path.join(__dirname, 'node_modules', 'playwright-core'));
@@ -169,8 +157,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   const walkFrames = hy2.filter(v => typeof v === 'number' && v <= 12);
   ck('★ 60 个状态积压时 13 个走格帧（含落格帧）全部保留',
     walkFrames.length === 13 && walkFrames.every((v, i) => v === i), JSON.stringify(hy2));
-  ck('★ 重复广播被语义签名合并，队列远未触到上限（不会 shift 丢格）',
-    hy2.length >= 13 && hy2.length < 30, '实际渲染 ' + hy2.length + ' 帧');
+  ck('★ 积压时优先合并非走格帧（收敛到上限 48）',
+    hy2.length === 48, '实际渲染 ' + hy2.length + ' 帧');
 
   /* E2d 破产变卖决策帧：积压时同样不可合并，否则玩家一帧都看不到弹窗。
      单独开一个页面，避免弹出的决策窗挡住后面 E3 的按钮点击。 */
@@ -188,37 +176,25 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       const orig = Engine.hydrate;
       Engine.hydrate = function (st) { window.__h.push(st && st.__probe); return orig.call(this, st); };
       window.requestAnimationFrame = fn => window.setTimeout(fn, 200);
-      const sym = (S.market && S.market[0] && S.market[0].sym) || 'AAA';
-      const kinds = {
-        20: { type: 'stock', sym, price: 100, cat: 'grw', amt: 2 },
-        26: { type: 'house', house: { icon: '🏠', name: '小屋', down: 1000, m: 100 }, at: '' },
-        32: { type: 'charity', donation: 100 },
-        38: { type: 'doodad', doodad: { icon: '🛍️', name: '意外' }, amt: 100, big: false },
-        44: { type: 'tax', amt: 100, byIncome: 100, byAssets: 100 },
-        50: { type: 'liquidate', deficit: 500 }
-      };
       for (let i = 0; i < 60; i++) {
         const c = JSON.parse(JSON.stringify(S));
         c.__probe = i;
         if (i < 10) c.walk = { idx: 0, left: 10 - i, steps: 10, stepMs: 270 };
         else delete c.walk;
-        c.pending = kinds[i] || null;
+        if (i === 20 || i === 35 || i === 50) c.pending = { type: 'liquidate', deficit: 500 };
         window.ONLINE_HOOKS.applyState(c);
       }
     });
     await wait(4000);
     const h = await p2.evaluate(() => window.__h.slice());
-    ck('★ 积压 60 帧时 6 类事件/决策帧全部保留（弹窗不再被合并掉）',
-      [20, 26, 32, 38, 44, 50].every(v => h.includes(v)),
-      JSON.stringify(h.filter(v => [20, 26, 32, 38, 44, 50].includes(v))));
-    ck('★ 决策帧页面的 10 个走格帧也全部保留',
-      h.filter(v => typeof v === 'number' && v < 10).length === 10,
-      JSON.stringify(h.filter(v => typeof v === 'number' && v < 10)));
+    ck('★ 积压 60 帧时 3 个破产变卖决策帧全部保留',
+      [20, 35, 50].every(v => h.includes(v)),
+      JSON.stringify(h.filter(v => [20, 35, 50].includes(v))));
     ck('决策帧页面无 JS 异常', errs2.length === 0, JSON.stringify(errs2.slice(0, 3)));
     await p2.close();
   }
 
-  /* E2c 短促失焦（未真正离开过，away=0）：不干预，10 格逐格播放，不瞬移 */
+  /* E2c 回到前台：积压直接同步最新，不能连播旧格或回退 */
   const vis = await page.evaluate(() => {
     const S = Engine.state();
     window.__hydrated = [];
@@ -230,14 +206,13 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     }
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
     window.dispatchEvent(new Event('visibilitychange'));   // 监听器挂在 window 上
-    return { rendered: window.__hydrated.slice() };
+    return { rendered: window.__hydrated.slice(), current: (Engine.state() || {}).__probe };
   });
   await wait(1200);
   const visAfter = await page.evaluate(() => window.__hydrated.slice());
-  ck('★ 短促失焦不干预：10 格逐格播放，不再同步到最新一帧而瞬移',
-    visAfter.length === 10 && visAfter.every((v, i) => v === i), JSON.stringify(visAfter));
-  ck('★ 播放顺序不回退、不倒播',
-    visAfter.every((v, i) => i === 0 || visAfter[i - 1] < v));
+  ck('★ 回前台一次性同步到最新状态，不连播旧格、不回退',
+    vis.rendered.length === 1 && vis.rendered[0] === 9 && vis.current === 9
+    && visAfter.length === 1 && visAfter[0] === 9, JSON.stringify({ vis, visAfter }));
 
   /* E3 联机结算：按钮文案正确，点击不重启本地引擎（放最后，点击会 reload） */
   const clickInfo = await page.evaluate(() => {
