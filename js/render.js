@@ -1979,20 +1979,48 @@
   const stateQueue = [];
   let queuePlaying = false;
   const MAX_STATE_QUEUE = 48;
-  /* 走格帧（S.walk.left > 0）必须每格画一帧；非走格帧（掷骰、行情、日志更新）
-     积压时可以合并，不会让人看到「棋子突然跳到终点」。 */
-  /* 注意不能用 left > 0：引擎 tick() 是「w.left-- 之后才 emit」，
-     最后一格（落格帧）的 walk.left 恰好是 0，把它判成可合并帧会丢掉终点位置。 */
+  const MAX_WALK_RUN = 12;      // 双骰最多 12 格：这个长度内的队列属正常走格，不干预
+  /* 走格帧必须每格画一帧。注意引擎 tick() 是「w.left-- 之后才 emit」，
+     最后一格（落格帧）的 walk.left 恰好是 0，不能用 left > 0 判断。 */
   const isWalkFrame = st => !!(st && st.walk && typeof st.walk.left === 'number');
-  /* ★ 破产变卖等「必须由玩家本人确认」的决策帧同样不可合并：
-     重连补包 / 后台积压时若被 splice 掉，玩家一帧都看不到弹窗，
-     回头只看到资产少了（配合服务端托管 AI 代做时就是「没选就被卖」）。 */
-  const isDecisionFrame = st => !!(st && st.pending && st.pending.type === 'liquidate');
-  const isProtectedFrame = st => isWalkFrame(st) || isDecisionFrame(st);
+  /* ★ 任何「等待玩家决策」的帧都是关键帧：买股 / 买房 / 慈善 / 意外支出 /
+     纳税 / 破产变卖。旧版只保护 liquidate，其它事件帧在积压时被 splice 合并掉，
+     表现就是「事件弹窗一闪而过 / 事件短暂卡顿」。 */
+  const isDecisionFrame = st => !!(st && st.pending);
+  /* 服务端实测约 1/4 的 STATE 是同一状态的重复广播（开局连发 3 个完全相同的
+     roll 帧、同一次决策期间行情刷新等）。用语义签名把重复帧在入队时替换掉，
+     队列自然收敛，不必靠「超限丢最老」把走格帧砍掉 —— 那正是跳格的来源。 */
+  function frameSig(st) {
+    if (!st) return '';
+    const w = isWalkFrame(st) ? 'W' + st.walk.left : '';
+    const pd = isDecisionFrame(st) ? st.pending : null;
+    let pv = '';
+    if (pd) {
+      const v = pd.deficit != null ? pd.deficit : pd.price != null ? pd.price
+              : pd.amt != null ? pd.amt : pd.donation != null ? pd.donation : (pd.sym || '');
+      pv = 'P' + (pd.type || '') + ':' + v;
+    }
+    return [st.turn, st.cur, st.await, w, pv].join('|');
+  }
+  /* 折叠到「最后一手」：真实链路每手约 10~15 帧（实测一轮走格 4~5 帧 +
+     事件 + 回合切换），保留最后一手就保住了完整的连续走格序列，
+     更早回合的历史帧一次丢掉。旧版无脑 shift 丢最老，会把当前走格序列的
+     前几格砍掉，玩家看到的就是棋子从半路突然开始 = 快速跳格。 */
+  function trimToLatestTurn() {
+    const last = stateQueue[stateQueue.length - 1];
+    if (!last) return;
+    const key = (last.turn || 0) + ':' + (last.cur || 0);
+    let start = stateQueue.length - 1;
+    for (let i = stateQueue.length - 2; i >= 0; i--) {
+      const s = stateQueue[i];
+      if ((s.turn || 0) + ':' + (s.cur || 0) === key) start = i;
+      else break;
+    }
+    if (start > 0) stateQueue.splice(0, start);
+  }
   /* ★ 只靠 rAF 有致命缺陷：切到别的标签页 / 窗口失焦时浏览器会暂停 rAF，
-     队列不再消费；网络包却仍在到达，积压后要么被上限丢掉中间格，要么回到前台
-     一次性连播 —— 这正是「慢速也偶发快速跳棋子 + 卡顿」的来源。
-     加 setTimeout 兜底，两者用 once 保证一帧只消费一个状态。 */
+     队列不再消费；网络包却仍在到达，积压后会滞后连播。加 setTimeout 兜底，
+     两者用 once 保证一帧只消费一个状态。 */
   const nextFrame = fn => {
     let done = false, guard = null;
     const go = () => {
@@ -2006,31 +2034,53 @@
   };
   function drainStateQueue() {
     const st = stateQueue.shift();
-    if (st) { Engine.hydrate(st); render(); }
+    if (st) {
+      /* ★ 单帧渲染异常绝不能毒化整条队列：旧版直接抛出，queuePlaying 永远
+         停在 true，之后所有 STATE 都不再渲染，表现就是「画面卡住 / 事件不出」。
+         残缺快照、浏览器扩展、异常 pending 字段都可能导致单帧 render 抛错。 */
+      try { Engine.hydrate(st); render(); }
+      catch (e) {
+        try { console.warn('[state] 跳过渲染失败的一帧：', e && e.message); } catch (_) {}
+      }
+    }
     if (stateQueue.length) nextFrame(drainStateQueue);
     else queuePlaying = false;
   }
   function enqueueState(st) {
-    stateQueue.push(st);
+    const sig = frameSig(st);
+    st.__cfSig = sig;
+    const last = stateQueue[stateQueue.length - 1];
+    if (last && last.__cfSig === sig) stateQueue[stateQueue.length - 1] = st;
+    else stateQueue.push(st);
     if (stateQueue.length > MAX_STATE_QUEUE) {
-      // 先合并可合并的普通帧（行情 / 日志 / 掷骰），走格帧与决策帧一律保留
-      for (let i = 0; i < stateQueue.length - 1 && stateQueue.length > MAX_STATE_QUEUE;) {
-        if (isProtectedFrame(stateQueue[i])) i++;
-        else stateQueue.splice(i, 1);
+      /* ① 全局同签名去重：只保留每个语义帧的最后一次出现。
+         走格帧的 left 各不相同、签名天然唯一，因此一格都不会被丢；
+         决策帧 / 状态刷新帧的重复广播被合并，弹窗不会闪。 */
+      const seen = new Set();
+      for (let i = stateQueue.length - 1; i >= 0; i--) {
+        const sig = stateQueue[i].__cfSig;
+        if (seen.has(sig)) stateQueue.splice(i, 1);
+        else seen.add(sig);
       }
-      // 极端情况全是走格帧：才退而丢最老的几个，绝不一次性只留最后一个
+      /* ② 仍超限（重连一次补了好几手）：只保留最后一手，历史回合一次折叠。
+         真实链路每手 10~15 帧，不会走到这一步的 shift 兜底。 */
+      if (stateQueue.length > MAX_STATE_QUEUE) trimToLatestTurn();
       while (stateQueue.length > MAX_STATE_QUEUE) stateQueue.shift();
     }
     if (!queuePlaying) { queuePlaying = true; nextFrame(drainStateQueue); }
   }
-  /* 回到前台时若积压过多，直接同步到最新状态。后台发生的事本来就该一次同步，
-     而不是把几十个旧格在人眼前连播一遍（那看起来就像瞬移）。 */
+  /* 回前台：短促失焦（<1s）与正常一次走格（≤12 帧）都不干预；
+     真正离开过且积压过多时，折叠历史但保留当前走格序列逐帧播完，
+     绝不直接 hydrate 最新状态 —— 那会把中间格一次性跳过，肉眼就是瞬移。 */
+  let hiddenAt = 0;
   window.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || stateQueue.length <= 6) return;
-    const latest = stateQueue[stateQueue.length - 1];
-    stateQueue.length = 0;
-    queuePlaying = false;
-    if (latest) { Engine.hydrate(latest); render(); }
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
+    const away = hiddenAt ? Date.now() - hiddenAt : 0;
+    hiddenAt = 0;
+    if (away < 1000 || stateQueue.length <= MAX_WALK_RUN) return;
+    /* 后台积压：折叠到最后一手，然后继续逐帧播完（不是直接跳到最新状态）。 */
+    trimToLatestTurn();
+    if (!queuePlaying && stateQueue.length) { queuePlaying = true; nextFrame(drainStateQueue); }
   });
   window.ONLINE_HOOKS = {
     // 进入对局画面（隐藏开始界面 / 显示游戏界面 / 切对局 BGM）
