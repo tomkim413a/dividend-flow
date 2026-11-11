@@ -185,15 +185,6 @@ function giveUp(roomId, userId) {
   seat.gaveUp = true;
   leaveRoom(room.id, userId);          // 复用托管逻辑，不复制引擎操作
 
-  /* ★ 主动放弃是玩家点过确认框的：此后这个座位全权交给 AI，
-     允许 AI 替它做破产变卖等资产处置，否则变卖会永久挂起、把其他玩家一起卡住。
-     断线托管不走这里 —— humanSeat 保持 true，重连后由本人自己选。 */
-  const gi = room.seats.indexOf(seat);
-  const gS = room.game && room.game.Engine.state();
-  const gp = gS && gS.players && gS.players[gi];
-  if (gp) gp.humanSeat = false;
-  if (room.game && room.game.Engine.resume) room.game.Engine.resume();
-
   /* 还有真人就继续：若走的是房主，把房主转给下一位真人。
      一个真人都不剩才终止整局（否则只剩 AI 空跑，白占资源）。
      注意：掉线托管的真人仍算「在」——他没主动放弃，随时能 RESUME 回来。 */

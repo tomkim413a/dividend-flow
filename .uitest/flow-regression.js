@@ -58,11 +58,7 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   ck('不再用 splice 一次性丢掉所有中间格', !/stateQueue\.splice\(0, stateQueue\.length - 1\)/.test(render));
   ck('走格帧特殊保护（含 walk.left=0 的落格帧）',
     /const isWalkFrame = st => !!\(st && st\.walk && typeof st\.walk\.left === 'number'\)/.test(render));
-  ck('积压时优先合并普通帧，走格帧与决策帧都保留',
-    /const isProtectedFrame = st => isWalkFrame\(st\) \|\| isDecisionFrame\(st\)/.test(render)
-    && /if \(isProtectedFrame\(stateQueue\[i\]\)\) i\+\+;\s*else stateQueue\.splice\(i, 1\);/.test(render));
-  ck('★ 破产变卖决策帧被标记为不可合并',
-    /const isDecisionFrame = st => !!\(st && st\.pending && st\.pending\.type === 'liquidate'\)/.test(render));
+  ck('积压时优先合并非走格帧', /if \(isWalkFrame\(stateQueue\[i\]\)\) i\+\+;\s*else stateQueue\.splice\(i, 1\);/.test(render));
   ck('rAF 之外有 setTimeout 兜底（后台标签页 rAF 会被暂停）',
     /guard = window\.setTimeout\(go, 40\);/.test(render) && /requestAnimationFrame\(go\)/.test(render));
   ck('回到前台积压过多时直接同步最新状态',
@@ -71,12 +67,11 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     /const key = 'handoff:'/.test(render) && /const winKey = 'win:'/.test(render));
 
   console.log('\n=== D. 脚本版本号一致（防浏览器缓存） ===');
-  ck('index.html 7 处脚本全部 20261111b',
-    (html.match(/\?v=20261111b/g) || []).length === 7);
+  ck('index.html 7 处脚本全部 20261111a',
+    (html.match(/\?v=20261111a/g) || []).length === 7);
   ck('online.js 动态加载的 protocol/net 同步版本',
-    (online.match(/20261111b/g) || []).length === 2);
-  ck('无旧版 20261111a / 20261109c 残留',
-    !/20261111a|20261109c/.test(html + online));
+    (online.match(/20261111a/g) || []).length === 2);
+  ck('无旧版 20261109c 残留', !/20261109c/.test(html + online));
 
   console.log('\n=== E. 真实 Edge 行为验证 ===');
   const { chromium } = require(path.join(__dirname, 'node_modules', 'playwright-core'));
@@ -159,40 +154,6 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     walkFrames.length === 13 && walkFrames.every((v, i) => v === i), JSON.stringify(hy2));
   ck('★ 积压时优先合并非走格帧（收敛到上限 48）',
     hy2.length === 48, '实际渲染 ' + hy2.length + ' 帧');
-
-  /* E2d 破产变卖决策帧：积压时同样不可合并，否则玩家一帧都看不到弹窗。
-     单独开一个页面，避免弹出的决策窗挡住后面 E3 的按钮点击。 */
-  {
-    const p2 = await browser.newPage({ viewport: { width: 1440, height: 960 } });
-    const errs2 = [];
-    p2.on('pageerror', e => errs2.push(e.message));
-    await p2.goto(INDEX);
-    await p2.waitForSelector('#player-cfg .pcfg');
-    await p2.click('#btn-start');
-    await p2.waitForFunction(() => !!(window.Engine && Engine.state() && Engine.state().players.length));
-    await p2.evaluate(() => {
-      const S = Engine.state();
-      window.__h = [];
-      const orig = Engine.hydrate;
-      Engine.hydrate = function (st) { window.__h.push(st && st.__probe); return orig.call(this, st); };
-      window.requestAnimationFrame = fn => window.setTimeout(fn, 200);
-      for (let i = 0; i < 60; i++) {
-        const c = JSON.parse(JSON.stringify(S));
-        c.__probe = i;
-        if (i < 10) c.walk = { idx: 0, left: 10 - i, steps: 10, stepMs: 270 };
-        else delete c.walk;
-        if (i === 20 || i === 35 || i === 50) c.pending = { type: 'liquidate', deficit: 500 };
-        window.ONLINE_HOOKS.applyState(c);
-      }
-    });
-    await wait(4000);
-    const h = await p2.evaluate(() => window.__h.slice());
-    ck('★ 积压 60 帧时 3 个破产变卖决策帧全部保留',
-      [20, 35, 50].every(v => h.includes(v)),
-      JSON.stringify(h.filter(v => [20, 35, 50].includes(v))));
-    ck('决策帧页面无 JS 异常', errs2.length === 0, JSON.stringify(errs2.slice(0, 3)));
-    await p2.close();
-  }
 
   /* E2c 回到前台：积压直接同步最新，不能连播旧格或回退 */
   const vis = await page.evaluate(() => {
