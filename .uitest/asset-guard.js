@@ -76,6 +76,8 @@ const freeze = g => g.stop();
   ck('★ 断线托管绑在 disconnecting（disconnect 时 socket.rooms 已被清空）',
     /socket\.on\('disconnecting', \(\) => \{[\s\S]{0,300}roomMgr\.leaveRoom\(/.test(srv)
     && !/socket\.on\('disconnect', \(\) => \{[\s\S]{0,300}roomMgr\.leaveRoom\(/.test(srv));
+  ck('★ 对局中 LEAVE_ROOM 必须被拒绝，不能绕过确认式退出托管座位',
+    /socket\.on\(CS\.LEAVE_ROOM[\s\S]{0,500}r0\.started[\s\S]{0,300}对局进行中/.test(srv));
 
   console.log('\n=== B. 场景 A：弹窗开着时断线，不得自动卖 ===');
   {

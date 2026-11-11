@@ -347,6 +347,16 @@ io.on('connection', socket => {
   socket.on(CS.LEAVE_ROOM, () => {
     const roomId = currentRoomId(socket);
     if (!roomId) return;
+    /* ★ 对局中不允许用 LEAVE_ROOM 静默离房：客户端「一键加入」会先无条件发它退旧房，
+       不校验的话，玩家没点「确定放弃」确认框座位就被托管给 AI —— 既绕过确认式退出，
+       也是「资产被 AI 代做变卖」漏洞的主要触发路径。
+       纯掉线不走这里（走 disconnecting，仍可 RESUME 回来，不算主动退出）。 */
+    const r0 = roomMgr.rooms.get(roomId);
+    if (r0 && r0.started) {
+      const seat = r0.seats.find(s => s.userId === socket.user.id);
+      if (seat && !seat.gaveUp)
+        return socket.emit(SC.ERROR, { msg: '对局进行中，请先通过退出确认放弃本局' });
+    }
     socket.leave(roomId);
     const room = roomMgr.leaveRoom(roomId, socket.user.id);
     if (room) io.to(roomId).emit(SC.ROOM, roomInfo(room));
