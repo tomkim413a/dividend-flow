@@ -847,6 +847,11 @@
     _coachDeferred: null,          // 教练讲解冻结期间，被挂起的引擎定时器
     // 讲解读完时由 render 调用：把挂起的定时器恢复执行（会自动再尊重 gate）
     coachRelease: () => { const d = Engine._coachDeferred; Engine._coachDeferred = null; if (d) later(d.fn, d.ms); },
+    /* ★ 联机接管时调用：清掉本地下棋用的两个定时器槽。
+       否则「先在单机局里 → 再登录进联机房」时，遗留的 walk 定时器会对着
+       服务端下发的状态再 tick 一次（本地也走一格 + 服务端也走一格），
+       表现就是棋子偶发多走一格 / 像在跳。清定时器即可，不碰任何状态数据。 */
+    freeze: () => clearTimers(),
     start,
     state: () => S,
     // 联机模式：注入服务端下发的权威状态（客户端不再本地跑规则，只做渲染 + 纯函数计算）

@@ -159,6 +159,17 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   ck('★ 同一格的重复帧不被节流（走到结算格不顿）', dg1 < 120, dg1 + 'ms');
   ck('重复帧之后仍按 stepMs 前进一格', dg2 >= 200, dg2 + 'ms');
 
+  /* E2d 联机接管：本地遗留的走格定时器必须被清掉
+     （否则本地引擎对着服务端状态再走一遍 → 棋子多走一格 / 像跳子） */
+  const froze = await page.evaluate(() => new Promise(res => {
+    let hit = 0;
+    Engine._walkTimer = window.setTimeout(() => { hit++; }, 60);
+    window.ONLINE_HOOKS.enter();
+    window.setTimeout(() => res({ hit, slot: Engine._walkTimer }), 220);
+  }));
+  ck('★ 进入联机时清掉本地遗留走格定时器（避免棋子被双重推进）',
+    froze.hit === 0 && froze.slot === null, JSON.stringify(froze));
+
   /* E2b 极端积压：60 个状态里 13 个走格帧（含 walk.left=0 的落格帧）必须一个不丢 */
   await page.evaluate(() => {
     const S = Engine.state();

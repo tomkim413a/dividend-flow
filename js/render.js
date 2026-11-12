@@ -1993,9 +1993,8 @@
      最后一格（落格帧）的 walk.left 恰好是 0，把它判成可合并帧会丢掉终点位置。 */
   const isWalkFrame = st => !!(st && st.walk && typeof st.walk.left === 'number');
   /* ★ 只靠 rAF 有致命缺陷：切到别的标签页 / 窗口失焦时浏览器会暂停 rAF，
-     队列不再消费；网络包却仍在到达，积压后要么被上限丢掉中间格，要么回到前台
-     一次性连播 —— 这正是「慢速也偶发快速跳棋子 + 卡顿」的来源。
-     加 setTimeout 兜底，两者用 once 保证一帧只消费一个状态。 */
+     队列不再消费；网络包却仍在到达。所以加 setTimeout 兜底，
+     两者用 once 保证一帧只消费一个状态。 */
   const nextFrame = fn => {
     let done = false, guard = null;
     const go = () => {
@@ -2021,12 +2020,12 @@
        走格包挤进同一瞬间，旧版就在 30~50ms 内连画 3 格，人手眼跟不上，
        看起来就是「棋子突然跳过去」。stepMs 由服务端随 walk 一起下发
        （真人与 AI 现在同速，都是按房间档位缩放后的值）。
-       只节流「走格 → 走格」，事件/行情等非走格帧仍是 16ms 一帧，不拖慢弹窗。 */
+       只节流「同一个人、真的前进一格」的相邻走格帧；事件/行情等非走格帧
+       仍是 16ms 一帧，不拖慢弹窗。 */
     const next = stateQueue[0];
-    /* 只对「真的前进了一格」的走格帧节流：引擎在银行结算格会连发两帧
-       （left 相同、位置相同），那种重复帧不该再白等一个 stepMs，否则
-       走到结算格会莫名顿一下。 */
-    if (isWalkFrame(st) && isWalkFrame(next) && next.walk.left !== st.walk.left) {
+    /* 同一格的重复帧（银行结算格会连发两帧）不节流，否则走到结算格会顿一下 */
+    if (isWalkFrame(st) && isWalkFrame(next) && next.walk.idx === st.walk.idx
+      && next.walk.left !== st.walk.left) {
       const ms = Math.max(150, Math.min(600, Number(st.walk && st.walk.stepMs) || 220));
       /* 只有严重积压（重连补包 / 后台回来）才允许适度追赶；
          正常抖动挤进来 2~5 帧时必须完整按 stepMs 走，绝不再压缩成「连跳」。 */
@@ -2067,6 +2066,10 @@
   window.ONLINE_HOOKS = {
     // 进入对局画面（隐藏开始界面 / 显示游戏界面 / 切对局 BGM）
     enter: function () {
+      /* 联机接管：先把本地可能残留的走格 / AI 定时器清掉，
+         否则本地引擎会对着服务端状态再走一遍，棋子就会多走一格。
+         重复调用只是多清一次空槽，代价可忽略。 */
+      if (Engine.freeze) Engine.freeze();
       $('#screen-setup').classList.add('hidden');
       $('#screen-game').classList.remove('hidden');
       if (window.BGM) window.BGM.play('game');
