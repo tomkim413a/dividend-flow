@@ -17,6 +17,16 @@ const roomMgr = require(path.join(ROOT, 'server', 'room'));
 
 const URL = process.env.URL || 'http://127.0.0.1:3399';
 const wait = ms => new Promise(r => setTimeout(r, ms));
+/* 线上（Render）RTT + 冷启动常有 300~1500ms，固定 sleep 会误报。
+   统一改成「等条件成立，超时再继续」——超时不抛错，让断言如实失败并打印现场。 */
+const waitFor = async (cond, ms = 10000, step = 50) => {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try { if (cond()) return true; } catch (e) { /* 条件里数组还没就绪 */ }
+    await wait(step);
+  }
+  return false;
+};
 let pass = 0, fail = 0;
 const ck = (n, ok, d) => { ok ? pass++ : fail++; console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${n}${d ? '  → ' + d : ''}`); };
 const head = t => console.log('\n===== ' + t + ' =====');
@@ -103,38 +113,45 @@ async function socketTests() {
   s2.on(SC.ROOM, r => rooms2.push(r));
   s2.on(SC.ERROR, e => errs2.push(e && e.msg));
 
+  let n1 = rooms1.length;
   s1.emit(CS.CREATE_ROOM, { speed: 'slow' });
-  await wait(350);
+  await waitFor(() => rooms1.length > n1);
   const roomId = rooms1.length ? rooms1[rooms1.length - 1].id : '';
   ck('★ 建房时指定的档位被服务端确认并下发',
     rooms1.some(r => r.speed === 'slow'), JSON.stringify(rooms1.map(r => r.speed)));
 
+  let n2 = rooms2.length;
   s2.emit(CS.JOIN_ROOM, { roomId });
-  await wait(300);
-  ck('第二名玩家成功加入房间', rooms2.length > 0 && rooms2[rooms2.length - 1].id === roomId, roomId);
+  await waitFor(() => rooms2.length > n2);
+  ck('第二名玩家成功加入房间',
+    !!roomId && rooms2.length > 0 && rooms2[rooms2.length - 1].id === roomId, `roomId=${roomId} 客人帧=${rooms2.length}`);
 
+  const m1 = rooms1.length, m2 = rooms2.length;
   s1.emit(CS.SET_SPEED, { speed: 'relaxed' });
-  await wait(300);
+  await waitFor(() => rooms1.length > m1 && rooms2.length > m2);
   ck('★ SET_SPEED 后两个客户端都收到新档位',
     rooms1.some(r => r.speed === 'relaxed') && rooms2.some(r => r.speed === 'relaxed'),
     `房主=${rooms1.map(r => r.speed)} 客人=${rooms2.map(r => r.speed)}`);
 
+  const k1 = rooms1.length;
   s1.emit(CS.SET_SPEED, { speed: 'bogus' });
-  await wait(300);
+  await waitFor(() => rooms1.length > k1);
   ck('非法档位被服务端规范化为默认档',
     rooms1.some(r => r.speed === roomMgr.DEFAULT_SPEED),
     JSON.stringify(rooms1.map(r => r.speed)));
 
+  const g1 = rooms1.length;
   s1.emit(CS.START_GAME);
-  await wait(350);
+  await waitFor(() => rooms1.length > g1);
   errs2.length = 0;
   s2.emit(CS.SET_SPEED, { speed: 'slow' });
-  await wait(300);
+  await waitFor(() => errs2.length > 0);
   ck('★ 对局中非房主改档被明确拒绝',
     errs2.some(m => /房主/.test(m || '')), JSON.stringify(errs2));
 
+  const z1 = rooms1.length;
   s1.emit(CS.SET_SPEED, { speed: 'slow' });
-  await wait(300);
+  await waitFor(() => rooms1.length > z1);
   ck('★ 房主在对局中仍可改档', rooms1.some(r => r.speed === 'slow'),
     JSON.stringify(rooms1.map(r => r.speed)));
 
