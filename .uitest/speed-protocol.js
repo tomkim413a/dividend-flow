@@ -56,8 +56,13 @@ head('A 房间级速度：默认值 / 白名单 / 开局传入 / 运行中改档
   ck('★ 改档即时作用到该房间的引擎（无需重开局）',
     g.CF.TIMING.speed === 'slow' && g.CF.TIMING.walkHold > before * 1.5,
     `${before} → ${g.CF.TIMING.walkHold}`);
-  ck('★ 服务端改档同样不影响真人节奏',
-    humanKeys.every((k, i) => g.CF.TIMING[k] === humanBefore[i]),
+  /* 20261112a 起策略变更（用户明确要求）：联机真人走格必须和 AI 同速，
+     因此改档时真人节奏要跟着档位一起变慢，且与 AI 的 walk* 完全相等。
+     （单机仍保持「真人固定 90~220ms 不受档位影响」，见 data.js 的 HUMAN_TIMING） */
+  const aiKeyOf = k => { const s = k.replace(/^human/, ''); return s.charAt(0).toLowerCase() + s.slice(1); };
+  ck('★ 服务端改档：真人走格与 AI 同步变慢且完全相等',
+    humanKeys.every((k, i) => g.CF.TIMING[k] === g.CF.TIMING[aiKeyOf(k)]
+      && g.CF.TIMING[k] > humanBefore[i]),
     `${humanBefore} → ${humanKeys.map(k => g.CF.TIMING[k])}`);
 
   // 另一个房间：档位互不影响

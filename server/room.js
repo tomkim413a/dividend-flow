@@ -183,7 +183,18 @@ function giveUp(roomId, userId) {
   if (!seat) return { err: '你不在本局座位中' };
   if (seat.gaveUp) return { err: '你已放弃本局' };
   seat.gaveUp = true;
+  const idx = room.seats.findIndex(s => s === seat);   // leaveRoom 只改 ai 标记，不重排座位
   leaveRoom(room.id, userId);          // 复用托管逻辑，不复制引擎操作
+  /* ★ 主动放弃 = 本人已明确授权电脑接管这个座位（含变卖资产、破产判定），
+     所以这里连「座位身份」一起交给 AI；掉线托管则绝不这样做（人随时会回来）。 */
+  const S2 = room.game && room.game.Engine.state();
+  const p2 = S2 && S2.players && S2.players[idx];
+  if (p2) { p2.ai = true; p2.humanSeat = false; }
+  /* 放弃的瞬间如果正停在自己的「破产变卖」弹窗上，必须由电脑把这一笔结掉：
+     弹窗不会再有人点，留着会把整局卡死（其余真人还在等这一手结束）。 */
+  if (S2 && S2.pending && S2.pending.type === 'liquidate' && S2.cur === idx && room.game.Engine.act) {
+    try { room.game.Engine.act.choose('liquidate', { random: true }); } catch (e) { /* 忽略 */ }
+  }
 
   /* 还有真人就继续：若走的是房主，把房主转给下一位真人。
      一个真人都不剩才终止整局（否则只剩 AI 空跑，白占资源）。

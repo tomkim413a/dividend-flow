@@ -67,10 +67,10 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
     /const key = 'handoff:'/.test(render) && /const winKey = 'win:'/.test(render));
 
   console.log('\n=== D. 脚本版本号一致（防浏览器缓存） ===');
-  ck('index.html 7 处脚本全部 20261111a',
-    (html.match(/\?v=20261111a/g) || []).length === 7);
+  ck('index.html 7 处脚本全部 20261112a',
+    (html.match(/\?v=20261112a/g) || []).length === 7);
   ck('online.js 动态加载的 protocol/net 同步版本',
-    (online.match(/20261111a/g) || []).length === 2);
+    (online.match(/20261112a/g) || []).length === 2);
   ck('无旧版 20261109c 残留', !/20261109c/.test(html + online));
 
   console.log('\n=== E. 真实 Edge 行为验证 ===');
@@ -114,13 +114,14 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   ck('★ 单机 AI 先手：2.2 秒内已自动掷骰推进（不再卡死）',
     JSON.stringify(t0.dice) !== JSON.stringify(t1.dice), JSON.stringify({ t0, t1 }));
 
-  /* E2 状态队列：rAF 被节流时 12 个走格帧一个都不能丢 */
+  /* E2 状态队列：rAF 被节流时 12 个走格帧一个都不能丢（且按 stepMs 逐格播放） */
   await page.evaluate(() => {
     const S = Engine.state();
     S.over = null; S.winner = null;
     window.__hydrated = [];
+    window.__hydratedAt = [];
     const orig = Engine.hydrate;
-    Engine.hydrate = function (st) { window.__hydrated.push(st && st.__probe); return orig.call(this, st); };
+    Engine.hydrate = function (st) { window.__hydrated.push(st && st.__probe); window.__hydratedAt.push(Date.now()); return orig.call(this, st); };
     window.requestAnimationFrame = fn => window.setTimeout(fn, 250);
     for (let i = 0; i < 12; i++) {
       const c = JSON.parse(JSON.stringify(S));
@@ -128,10 +129,16 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       window.ONLINE_HOOKS.applyState(c);
     }
   });
-  await wait(1400);
+  /* 新节奏：每格按服务端 stepMs(270ms) 播放，不再 16ms 连播 —— 等待时间相应放长 */
+  await wait(12 * 270 + 1500);
   const hyd = await page.evaluate(() => window.__hydrated);
+  const hydAt = await page.evaluate(() => window.__hydratedAt);
   ck('★ 后台节流下 12 个走格帧全部渲染（零丢格）',
     hyd.length === 12 && hyd.every((v, i) => v === i), JSON.stringify(hyd));
+  const gaps = hydAt.slice(1).map((t, i) => t - hydAt[i]);
+  const minGap = gaps.length ? Math.min.apply(null, gaps) : 0;
+  ck('★ 走格帧按 stepMs 逐格播放（不再十几毫秒连跳多格）',
+    gaps.length >= 10 && minGap >= 200, '最小间隔 ' + minGap + 'ms / 全部 ' + JSON.stringify(gaps));
 
   /* E2b 极端积压：60 个状态里 13 个走格帧（含 walk.left=0 的落格帧）必须一个不丢 */
   await page.evaluate(() => {
@@ -147,7 +154,8 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
       window.ONLINE_HOOKS.applyState(c);
     }
   });
-  await wait(3000);
+  /* 13 格 × 270ms + 35 个非走格帧（每帧约 40ms 兜底）≈ 4.9s，留足余量 */
+  await wait(6500);
   const hy2 = await page.evaluate(() => window.__hydrated);
   const walkFrames = hy2.filter(v => typeof v === 'number' && v <= 12);
   ck('★ 60 个状态积压时 13 个走格帧（含落格帧）全部保留',

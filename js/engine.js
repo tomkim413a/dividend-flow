@@ -123,6 +123,11 @@
     const shape = CF.PIECE_SHAPES.some(s => s.k === cfg.shape) ? cfg.shape : CF.pick(CF.PIECE_SHAPES).k;
     return {
       name: cfg.name || prof.name, ai: !!cfg.ai, color: CF.COLORS[i % CF.COLORS.length], prof, shape,
+      /* ★ 座位身份（不可变）：开局时是不是真人，永远不再变。
+         p.ai 是「当前是否由电脑代打」的可变托管标记，断线 / 放弃都会被改成 true；
+         变卖资产这种不可逆的财产处置，只能看座位身份，绝不能看托管标记 ——
+         否则一次瞬时掉线就会把真人的股票替他卖掉（线上实测的「没弹窗直接卖资产」）。 */
+      humanSeat: cfg.humanSeat === undefined ? !cfg.ai : !!cfg.humanSeat,
       cash: prof.savings,
       expLines: prof.expenseLines.map(l => Object.assign({}, l, { paid: false })),
       stocks: [], hamsterPos: 0, skip: false, charityDice: false, dead: false, won: false
@@ -321,9 +326,17 @@
   //   · 真人玩家 → 弹窗（pending: 'liquidate'）让他自己决定卖哪只、卖多少股，引擎只兜底；
   //   · AI / 无持仓 → 自动变卖，顺序先动“不产股息的成长股”，尽量保住吃股息的红利股。
   // 每一笔变卖都记入 S.liq，供 UI 逐笔回放（高亮行情条 / 棋盘棋子 / 玩家卡）。
+  /* 座位身份判定：p.ai 只是「谁在代打」，不能代表「谁有权处置财产」。
+     单机 cfg 没有 humanSeat 字段 → 由 buildPlayer 用 !ai 兜底，行为完全不变。 */
+  const isHumanSeat = p => !!(p && p.humanSeat);
+
   function bailout(p) {
     if (!S || S.over || p.dead || p.won || p.cash >= 0) return;
-    if (!p.ai && (p.stocks || []).length) {
+    /* ★ 只有「开局就不是真人」的座位（纯 AI）才自动变卖。
+       真人座位无论现在是否有电脑托管（p.ai=true），都必须由本人决定卖什么：
+       · 掉线托管 → 挂起等他重连（玩家明确选过的规则）
+       · 主动放弃 → 服务端会把 humanSeat 置 false，才会落到下面的自动变卖 */
+    if (isHumanSeat(p) && (p.stocks || []).length) {
       // 真人：不替他做主，交给他自己挑（弹窗要求至少卖到现金不为负）
       setPending('liquidate', { deficit: Math.ceil(-p.cash) });
       return;
@@ -527,8 +540,19 @@
     if (!S || S.await !== 'pending') return;
     const p = cur();
     const pd = S.pending;
-    S.pending = null;
     payload = payload || {};
+    /* ★ 变卖不存在「空提交」这种合法输入。
+       弹窗只有在玩家勾了股数（此时确认按钮才可点）、点「🎲 随机」、点「确认破产出局」时
+       才会提交。任何不带 sell 股数、也不带 random / giveUp 的包，都是陈旧点击或重复点击
+       （上一张事件卡的双击、状态重播时的误触）—— 一律丢弃，弹窗继续等玩家本人决定。
+       旧版把它当成「卖 0 股」，紧接着 liqTopUp 按成长股优先自动补卖，
+       线上表现就是用户报的「没有弹窗，资产被自动卖掉抵支出」。 */
+    if (pd.type === 'liquidate' && !payload.random && !payload.giveUp) {
+      const sell = payload.sell || {};
+      const qty = Object.keys(sell).reduce((s, k) => s + Math.max(0, Math.floor(sell[k] || 0)), 0);
+      if (!qty) return;
+    }
+    S.pending = null;
 
     switch (pd.type) {
       case 'stock': {
@@ -766,6 +790,18 @@
       case 'charity': {
         if (p.cash >= pd.donation + AP.charityCashPad && Math.random() < AP.charityDonateProb) id = 'donate';
         break;
+      }
+      case 'liquidate': {
+        /* 破产变卖：只有「已把座位身份交给电脑」的座位（主动放弃）才由电脑代卖。
+           真人座位（包括掉线托管）一律什么都不做 —— 弹窗留给他本人回来点，
+           这是玩家明确选过的规则：宁可挂起等重连，也不替他处置资产。 */
+        if (!isHumanSeat(p)) {
+          S.await = 'pending';
+          choose('liquidate', { random: true });
+          return;
+        }
+        S.await = 'pending';       // 保持等待态，不推进回合
+        return;
       }
     }
     S.await = 'pending';

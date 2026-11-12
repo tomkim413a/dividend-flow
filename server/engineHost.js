@@ -66,8 +66,11 @@ function createEngineContext(opts) {
   return { CF, Engine, takeSfx };
 }
 
-/** 生成一局的配置（cfg）：[{ name, prof, shape, ai }]
- *  职业优先用座位上玩家选的（p.prof），缺失或非法时才按序号兜底 */
+/** 生成一局的配置（cfg）：[{ name, prof, shape, ai, humanSeat }]
+ *  职业优先用座位上玩家选的（p.prof），缺失或非法时才按序号兜底。
+ *  ★ humanSeat = 「这个座位开局时是不是真人」，取座位上的 userId（AI 补位座位没有 userId）。
+ *    它与 p.ai（托管标记）相互独立：掉线托管只改 ai，绝不动 humanSeat，
+ *    这样引擎才能保证「真人的资产永远由本人处置」。 */
 function buildCfg(CF, players) {
   const profIds = CF.PROFESSIONS.map(p => p.id);
   const valid = new Set(profIds);
@@ -75,7 +78,8 @@ function buildCfg(CF, players) {
     name: p.name,
     prof: valid.has(p.prof) ? p.prof : profIds[i % profIds.length],
     shape: p.shape || '',
-    ai: !!p.ai
+    ai: !!p.ai,
+    humanSeat: !!p.userId
   }));
 }
 

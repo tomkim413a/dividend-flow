@@ -125,7 +125,7 @@
   /* ---------------- 联机组件：后台顺序加载 ----------------
      顺序加载最稳：protocol.js → socket.io → net.js，后者依赖前者的 CS/SC/io。
      全程后台、失败可重试，不再阻塞登录框，也不再弹「加载超时」alert。 */
-  const SCRIPTS = ['/protocol.js?v=20261111a', '/socket.io/socket.io.js', 'js/net.js?v=20261111a'];
+  const SCRIPTS = ['/protocol.js?v=20261112a', '/socket.io/socket.io.js', 'js/net.js?v=20261112a'];
   let scriptsPromise = null;
   function loadScripts() {
     if (scriptsPromise) return scriptsPromise;

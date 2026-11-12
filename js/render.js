@@ -1252,6 +1252,14 @@
     if (pd.type === 'liquidate' && $('#btn-liq-ok')) bindLiquidate(p);
     $('#mbody').querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
       const act = b.dataset.act;
+      /* ★ 同一次决策只提交一次：连点「确定」、或状态重播时误触到上一张卡片的按钮，
+         都会在服务端生成一个「第二个 CHOOSE 包」。它落到下一个决策（例如破产变卖）上时，
+         旧引擎会把它当「卖 0 股」再自动补卖 —— 这就是「没弹窗资产被卖」的源头之一。
+         这里按「决策签名 + 动作」在 1.2 秒内去重，给玩家留重试余地（不做永久禁用）。 */
+      const sig = key + '|' + act;
+      const now = Date.now();
+      if (UI.choiceSig === sig && now - (UI.choiceAt || 0) < 1200) return;
+      UI.choiceSig = sig; UI.choiceAt = now;
       const payload = {};
       if (act === 'buy') payload.amount = amtVal();
       if (act === 'liquidate') payload.giveUp = b.dataset.giveup === '1';
@@ -1999,11 +2007,32 @@
     if (typeof window.requestAnimationFrame === 'function') window.requestAnimationFrame(go);
     guard = window.setTimeout(go, 40);
   };
+  let paceTimer = null;
   function drainStateQueue() {
+    paceTimer = null;
     const st = stateQueue.shift();
-    if (st) { Engine.hydrate(st); render(); }
-    if (stateQueue.length) nextFrame(drainStateQueue);
-    else queuePlaying = false;
+    if (st) {
+      // 单帧渲染异常不能毒化整条队列（否则后面所有格子都不再画）
+      try { Engine.hydrate(st); render(); } catch (e) { /* 忽略该帧 */ }
+    }
+    if (!stateQueue.length) { queuePlaying = false; return; }
+    /* ★ 走格帧之间按「服务端这一步本该花的时长」节流。
+       队列里排着下一格时不再用 rAF(≈16ms) 立刻播 —— 网络抖动会把 2~3 个
+       走格包挤进同一瞬间，旧版就在 30~50ms 内连画 3 格，人手眼跟不上，
+       看起来就是「棋子突然跳过去」。stepMs 由服务端随 walk 一起下发
+       （真人与 AI 现在同速，都是按房间档位缩放后的值）。
+       只节流「走格 → 走格」，事件/行情等非走格帧仍是 16ms 一帧，不拖慢弹窗。 */
+    const next = stateQueue[0];
+    if (isWalkFrame(st) && isWalkFrame(next)) {
+      const ms = Math.max(150, Math.min(600, Number(st.walk && st.walk.stepMs) || 220));
+      /* 只有严重积压（重连补包 / 后台回来）才允许适度追赶；
+         正常抖动挤进来 2~5 帧时必须完整按 stepMs 走，绝不再压缩成「连跳」。 */
+      const wait = stateQueue.length > 20 ? Math.min(ms, 160) : ms;
+      queuePlaying = true;
+      paceTimer = window.setTimeout(drainStateQueue, wait);
+      return;
+    }
+    nextFrame(drainStateQueue);
   }
   function enqueueState(st) {
     stateQueue.push(st);
@@ -2016,7 +2045,11 @@
       // 极端情况全是走格帧：才退而丢最老的几个，绝不一次性只留最后一个
       while (stateQueue.length > MAX_STATE_QUEUE) stateQueue.shift();
     }
-    if (!queuePlaying) { queuePlaying = true; nextFrame(drainStateQueue); }
+    if (!queuePlaying) {
+      if (paceTimer) { clearTimeout(paceTimer); paceTimer = null; }   // 防止两条消费链并行
+      queuePlaying = true;
+      nextFrame(drainStateQueue);
+    }
   }
   /* 回到前台时若积压过多，直接同步到最新状态。后台发生的事本来就该一次同步，
      而不是把几十个旧格在人眼前连播一遍（那看起来就像瞬移）。 */
@@ -2025,6 +2058,7 @@
     const latest = stateQueue[stateQueue.length - 1];
     stateQueue.length = 0;
     queuePlaying = false;
+    if (paceTimer) { clearTimeout(paceTimer); paceTimer = null; }
     if (latest) { Engine.hydrate(latest); render(); }
   });
   window.ONLINE_HOOKS = {
