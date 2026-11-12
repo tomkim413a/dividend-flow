@@ -140,6 +140,25 @@ const wait = ms => new Promise(r => setTimeout(r, ms));
   ck('★ 走格帧按 stepMs 逐格播放（不再十几毫秒连跳多格）',
     gaps.length >= 10 && minGap >= 200, '最小间隔 ' + minGap + 'ms / 全部 ' + JSON.stringify(gaps));
 
+  /* E2c 银行结算格的重复帧（left 相同、位置相同）不该被节流白等一个 stepMs */
+  await page.evaluate(() => {
+    const S = Engine.state();
+    window.__hydrated = []; window.__hydratedAt = [];
+    const mk = (left, id) => {
+      const c = JSON.parse(JSON.stringify(S));
+      c.__probe = id; c.walk = { idx: 0, left, steps: 6, stepMs: 270 };
+      return c;
+    };
+    window.ONLINE_HOOKS.applyState(mk(5, 100));
+    window.ONLINE_HOOKS.applyState(mk(5, 101));   // 同一格重复帧（bankSettle 额外 emit）
+    window.ONLINE_HOOKS.applyState(mk(4, 102));
+  });
+  await wait(900);
+  const dup = await page.evaluate(() => ({ ids: window.__hydrated, at: window.__hydratedAt }));
+  const dg1 = dup.at[1] - dup.at[0], dg2 = dup.at[2] - dup.at[1];
+  ck('★ 同一格的重复帧不被节流（走到结算格不顿）', dg1 < 120, dg1 + 'ms');
+  ck('重复帧之后仍按 stepMs 前进一格', dg2 >= 200, dg2 + 'ms');
+
   /* E2b 极端积压：60 个状态里 13 个走格帧（含 walk.left=0 的落格帧）必须一个不丢 */
   await page.evaluate(() => {
     const S = Engine.state();

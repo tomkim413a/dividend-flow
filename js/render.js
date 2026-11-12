@@ -2023,7 +2023,10 @@
        （真人与 AI 现在同速，都是按房间档位缩放后的值）。
        只节流「走格 → 走格」，事件/行情等非走格帧仍是 16ms 一帧，不拖慢弹窗。 */
     const next = stateQueue[0];
-    if (isWalkFrame(st) && isWalkFrame(next)) {
+    /* 只对「真的前进了一格」的走格帧节流：引擎在银行结算格会连发两帧
+       （left 相同、位置相同），那种重复帧不该再白等一个 stepMs，否则
+       走到结算格会莫名顿一下。 */
+    if (isWalkFrame(st) && isWalkFrame(next) && next.walk.left !== st.walk.left) {
       const ms = Math.max(150, Math.min(600, Number(st.walk && st.walk.stepMs) || 220));
       /* 只有严重积压（重连补包 / 后台回来）才允许适度追赶；
          正常抖动挤进来 2~5 帧时必须完整按 stepMs 走，绝不再压缩成「连跳」。 */
